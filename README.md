@@ -79,6 +79,22 @@ curl -X POST http://localhost:8002/generate \
 - `services/ingest/` — инжест документов
 - `knowledge/termidesk/` — база знаний (md/txt/pdf)
 
+## Если бот не использует базу знаний (отвечает без контекста из faq.md и т.д.)
+
+Убедитесь, что применены миграции retrieval и загружена база:
+
+1. **Проверьте логи retrieval при старте** — при отсутствии таблиц появится предупреждение `retrieval_schema_missing` и подсказка команды.
+2. **Примените миграции retrieval вручную** (из корня проекта):
+   ```bash
+   docker compose run --rm retrieval python -m alembic -c alembic.ini upgrade head
+   ```
+   Должно завершиться без ошибок. Если видите ошибку про extension `vector` (нет прав) — создайте расширение в БД под суперпользователем: `CREATE EXTENSION IF NOT EXISTS vector;`
+3. **Загрузите документы:**
+   ```bash
+   make ingest
+   ```
+4. Перезапустите сервисы: `docker compose up -d`.
+
 ## Команды Makefile
 
 - `make up` — поднять все сервисы

@@ -1,9 +1,11 @@
 """Retrieval service entrypoint."""
 from contextlib import asynccontextmanager
 
+import structlog
 from fastapi import FastAPI
 from prometheus_client import make_asgi_app
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from shared.logging import configure_logging
@@ -38,6 +40,17 @@ async def lifespan(app: FastAPI):
         settings.database_url,
         echo=False,
     )
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1 FROM retrieval.chunks LIMIT 1"))
+    except ProgrammingError as e:
+        if "does not exist" in str(e):
+            structlog.get_logger().warning(
+                "retrieval_schema_missing",
+                msg="Schema retrieval or table chunks not found. RAG will return empty. Apply migrations: docker compose run --rm retrieval python -m alembic -c alembic.ini upgrade head",
+            )
+    except Exception:
+        pass
     session_factory = async_sessionmaker(
         engine,
         class_=AsyncSession,
