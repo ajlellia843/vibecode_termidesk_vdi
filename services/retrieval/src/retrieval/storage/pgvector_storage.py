@@ -16,10 +16,10 @@ class PgVectorStorage(Storage):
 
     async def search(self, query: str, top_k: int = 5) -> list[SearchResult]:
         async with self._session_factory() as session:
-            # Try vector search if we have embeddings; else fallback to text search
             try:
                 return await self._vector_search(session, query, top_k)
             except Exception:
+                await session.rollback()
                 return await self._text_search(session, query, top_k)
 
     async def _text_search(self, session: AsyncSession, query: str, top_k: int) -> list[SearchResult]:
