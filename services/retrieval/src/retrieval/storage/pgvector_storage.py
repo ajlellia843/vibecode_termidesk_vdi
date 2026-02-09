@@ -1,9 +1,10 @@
 """PgVector storage with optional text-search fallback when embeddings are missing."""
 import json
 import os
+import re
 import time
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -84,21 +85,43 @@ class PgVectorStorage(Storage):
                 )
             )
         if not out and query.strip():
-            q_any = (
-                select(Chunk.id, Chunk.text, Document.source)
-                .join(Document, Chunk.document_id == Document.id)
-                .limit(top_k)
-            )
-            r2 = await session.execute(q_any)
-            for i, (chunk_id, text_val, source) in enumerate(r2.all()):
-                out.append(
-                    SearchResult(
-                        chunk_id=str(chunk_id),
-                        text=text_val or "",
-                        source=source or "",
-                        score=0.5 - (i * 0.05),
-                    )
+            words = [w for w in re.split(r"\W+", query) if len(w) >= 2][:6]
+            if words:
+                q_words = (
+                    select(Chunk.id, Chunk.text, Document.source)
+                    .join(Document, Chunk.document_id == Document.id)
+                    .where(or_(*[Chunk.text.ilike(f"%{w}%") for w in words]))
+                    .limit(top_k * 2)
                 )
+                r_words = await session.execute(q_words)
+                seen = set()
+                for (chunk_id, text_val, source) in r_words.all():
+                    if chunk_id not in seen and len(out) < top_k:
+                        seen.add(chunk_id)
+                        out.append(
+                            SearchResult(
+                                chunk_id=str(chunk_id),
+                                text=text_val or "",
+                                source=source or "",
+                                score=0.7,
+                            )
+                        )
+            if not out:
+                q_any = (
+                    select(Chunk.id, Chunk.text, Document.source)
+                    .join(Document, Chunk.document_id == Document.id)
+                    .limit(top_k)
+                )
+                r2 = await session.execute(q_any)
+                for i, (chunk_id, text_val, source) in enumerate(r2.all()):
+                    out.append(
+                        SearchResult(
+                            chunk_id=str(chunk_id),
+                            text=text_val or "",
+                            source=source or "",
+                            score=0.5 - (i * 0.05),
+                        )
+                    )
         return out
 
     async def _vector_search(self, session: AsyncSession, query: str, top_k: int) -> list[SearchResult]:
