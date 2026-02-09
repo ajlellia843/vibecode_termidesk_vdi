@@ -4,6 +4,7 @@ import os
 from uuid import UUID
 
 from sqlalchemy import select, text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from retrieval.storage.base import SearchResult, Storage
@@ -44,6 +45,12 @@ class PgVectorStorage(Storage):
                 # #region agent log
                 _dlog("search except", {"exc_type": type(e).__name__, "exc_msg": str(e)[:200]}, "H1")
                 # #endregion
+                if isinstance(e, ProgrammingError) and "does not exist" in str(e):
+                    # Schema/table missing (migrations not applied): return empty so orchestrator can still reply via LLM
+                    # #region agent log
+                    _dlog("missing table, return empty", {}, "H1")
+                    # #endregion
+                    return []
                 await session.rollback()
                 # #region agent log
                 _dlog("after rollback, retry _text_search", {}, "H1")
