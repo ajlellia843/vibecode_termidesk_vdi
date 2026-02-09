@@ -1,0 +1,14 @@
+"""Ingest service configuration."""
+from pydantic_settings import SettingsConfigDict
+
+from shared.config import BaseAppSettings
+
+
+class IngestSettings(BaseAppSettings):
+    model_config = SettingsConfigDict(env_prefix="INGEST_")
+
+    knowledge_path: str = "knowledge"
+    database_url: str = "postgresql+asyncpg://app:changeme@localhost:5432/termidesk_bot"
+    chunk_size: int = 500
+    chunk_overlap: int = 50
+    embedding_dim: int = 384

@@ -1,0 +1,86 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-termidesk_bot}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-app} -d ${POSTGRES_DB:-termidesk_bot}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  retrieval:
+    build:
+      context: .
+      dockerfile: services/retrieval/Dockerfile
+    env_file: .env
+    environment:
+      RETRIEVAL_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-termidesk_bot}
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  llm:
+    build:
+      context: .
+      dockerfile: services/llm/Dockerfile
+    env_file: .env
+    ports:
+      - "8002:8002"
+    depends_on:
+      - postgres
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: services/orchestrator/Dockerfile
+    env_file: .env
+    environment:
+      ORCHESTRATOR_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-termidesk_bot}
+      ORCHESTRATOR_RETRIEVAL_URL: http://retrieval:8001
+      ORCHESTRATOR_LLM_URL: http://llm:8002
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      retrieval:
+        condition: service_started
+      llm:
+        condition: service_started
+
+  tg-bot:
+    build:
+      context: .
+      dockerfile: services/tg_bot/Dockerfile
+    env_file: .env
+    environment:
+      TG_BOT_ORCHESTRATOR_URL: http://orchestrator:8000
+    depends_on:
+      - orchestrator
+
+  ingest:
+    build:
+      context: .
+      dockerfile: services/ingest/Dockerfile
+    env_file: .env
+    environment:
+      INGEST_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-termidesk_bot}
+    volumes:
+      - ./knowledge:/app/knowledge:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - tools
+
+volumes:
+  postgres_data: {}
