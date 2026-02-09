@@ -22,6 +22,9 @@ services:
     env_file: .env
     environment:
       RETRIEVAL_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-termidesk_bot}
+      DEBUG_LOG_PATH: /app/.cursor/debug.log
+    volumes:
+      - ./.cursor:/app/.cursor
     ports:
       - "8001:8001"
     depends_on:
@@ -47,6 +50,9 @@ services:
       ORCHESTRATOR_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-termidesk_bot}
       ORCHESTRATOR_RETRIEVAL_URL: http://retrieval:8001
       ORCHESTRATOR_LLM_URL: http://llm:8002
+      DEBUG_LOG_PATH: /app/.cursor/debug.log
+    volumes:
+      - ./.cursor:/app/.cursor
     ports:
       - "8000:8000"
     depends_on:
@@ -64,6 +70,9 @@ services:
     env_file: .env
     environment:
       TG_BOT_ORCHESTRATOR_URL: http://orchestrator:8000
+      DEBUG_LOG_PATH: /app/.cursor/debug.log
+    volumes:
+      - ./.cursor:/app/.cursor
     depends_on:
       - orchestrator
 
