@@ -28,13 +28,20 @@ router = APIRouter(prefix="/api/v1", tags=["orchestrator"])
 @router.post("/chat", response_model=ChatResponse)
 async def chat(body: ChatRequest, request: Request) -> ChatResponse:
     service = request.app.state.dialog_service
-    reply, sources, conversation_id = await service.reply(
+    result = await service.reply(
         user_id=body.user_id,
         telegram_chat_id=body.user_id,
         user_message=body.message,
         conversation_id=body.conversation_id,
     )
-    return ChatResponse(reply=reply, sources=sources, conversation_id=conversation_id)
+    return ChatResponse(
+        reply=result.reply,
+        sources=result.sources,
+        conversation_id=result.conversation_id,
+        mode=result.mode,
+        version=result.version,
+        rag=result.rag,
+    )
 
 
 @router.post("/users/upsert", response_model=UserResponse)

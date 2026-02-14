@@ -1,10 +1,15 @@
 """Prompt assembly for RAG + dialog."""
 from orchestrator.clients.retrieval_client import RetrievalResultItem
 
-SYSTEM_PROMPT = """Ты — бот поддержки Termidesk VDI. Отвечай только на основе предоставленного контекста и базы знаний.
-Если информации недостаточно для ответа — честно скажи и задай 1–2 уточняющих вопроса (режим диагностики).
-Не выдумывай решения. Если не нашёл ответ в контексте — предложи пользователю собрать логи и обратиться в поддержку.
+SYSTEM_PROMPT_TEMPLATE = """Ты — саппорт Termidesk VDI.
+Отвечай строго по версии продукта: {version}.
+Используй ТОЛЬКО информацию из предоставленных источников; не выдумывай.
+Если в источниках нет ответа — честно скажи и предложи шаги диагностики или уточняющие вопросы (что за ошибка, на каком шаге, клиент или сервер, логи).
 Отвечай кратко и по делу."""
+
+
+def get_system_prompt(version: str) -> str:
+    return SYSTEM_PROMPT_TEMPLATE.format(version=version or "не указана")
 
 
 def build_rag_context(chunks: list[RetrievalResultItem]) -> str:
@@ -30,11 +35,13 @@ def build_full_prompt(
     user_message: str,
     rag_chunks: list[RetrievalResultItem],
     history: list[tuple[str, str]],
+    version: str | None = None,
 ) -> str:
+    system_prompt = get_system_prompt(version or "не указана")
     rag_context = build_rag_context(rag_chunks)
     history_context = build_messages_context(history)
     prompt_parts = [
-        f"{SYSTEM_PROMPT}",
+        system_prompt,
         "",
         "Контекст из базы знаний Termidesk:",
         rag_context,

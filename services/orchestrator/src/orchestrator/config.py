@@ -14,3 +14,5 @@ class OrchestratorSettings(BaseAppSettings):
     llm_url: str = "http://llm:8002"
     retrieval_top_k: int = 5
     max_history_messages: int = 10
+    rag_min_confidence: float = 0.30
+    diagnostic_questions_max: int = 2

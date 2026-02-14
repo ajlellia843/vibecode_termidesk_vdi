@@ -47,6 +47,8 @@ async def lifespan(app: FastAPI):
         llm_client=llm_client,
         retrieval_top_k=settings.retrieval_top_k,
         max_history_messages=settings.max_history_messages,
+        rag_min_confidence=settings.rag_min_confidence,
+        diagnostic_questions_max=settings.diagnostic_questions_max,
     )
     app.state.dialog_service = dialog_service
     app.state.session_factory = session_factory

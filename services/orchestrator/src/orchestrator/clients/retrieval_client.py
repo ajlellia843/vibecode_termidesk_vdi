@@ -17,10 +17,15 @@ class RetrievalClient:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
 
-    async def search(self, query: str, top_k: int = 5) -> list[RetrievalResultItem]:
+    async def search(
+        self, query: str, top_k: int = 5, version: str | None = None
+    ) -> list[RetrievalResultItem]:
         url = f"{self._base_url}/search"
+        payload: dict = {"query": query, "top_k": top_k}
+        if version is not None:
+            payload["version"] = version
         async with httpx.AsyncClient(timeout=self._timeout) as client:
-            resp = await client.post(url, json={"query": query, "top_k": top_k})
+            resp = await client.post(url, json=payload)
             resp.raise_for_status()
             data = resp.json()
         results = data.get("results", [])
