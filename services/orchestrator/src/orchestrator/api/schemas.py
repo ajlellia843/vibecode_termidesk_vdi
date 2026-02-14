@@ -14,3 +14,15 @@ class ChatResponse(BaseModel):
     reply: str
     sources: list[dict[str, str]] = Field(default_factory=list)
     conversation_id: UUID | None = None
+
+
+class UserUpsertRequest(BaseModel):
+    telegram_id: str = Field(..., min_length=1)
+
+
+class UserVersionRequest(BaseModel):
+    version: str = Field(..., min_length=1)
+
+
+class UserResponse(BaseModel):
+    termidesk_version: str | None = None
