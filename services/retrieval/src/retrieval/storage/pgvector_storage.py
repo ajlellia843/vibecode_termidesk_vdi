@@ -55,10 +55,16 @@ class PgVectorStorage(Storage):
                     out = await self._vector_search(session, query, top_k, version)
                     return out
                 except ProgrammingError as e:
+                    # #region agent log
+                    _dlog("vector_search ProgrammingError", {"exc_msg": str(e)[:250]}, "H1")
+                    # #endregion
                     if "does not exist" in str(e):
                         return []
                     raise
-                except Exception:
+                except Exception as e:
+                    # #region agent log
+                    _dlog("vector_search exception", {"exc_type": type(e).__name__, "exc_msg": str(e)[:250]}, "H3")
+                    # #endregion
                     await session.rollback()
                     return []
             # hybrid: vector first, then text if empty
@@ -134,6 +140,9 @@ class PgVectorStorage(Storage):
         version: str | None = None,
     ) -> list[SearchResult]:
         """Vector similarity search (L2). Requires embedder and chunks.embedding."""
+        # #region agent log
+        _dlog("_vector_search start", {"retrieval_mode": self._retrieval_mode, "version": version}, "H4")
+        # #endregion
         embedder = self._embedder
         if embedder is None:
             embedder = _get_embedder()()
@@ -142,6 +151,9 @@ class PgVectorStorage(Storage):
         try:
             from pgvector.sqlalchemy import Vector
         except ImportError:
+            # #region agent log
+            _dlog("_vector_search no pgvector", {"message": "ImportError"}, "H3")
+            # #endregion
             return []
 
         dist_col = Chunk.embedding.op("<->")(bindparam("q_emb", type_=Vector(384)))
@@ -155,9 +167,16 @@ class PgVectorStorage(Storage):
         if version is not None:
             stmt = stmt.where(Document.version == version)
 
+        # #region agent log
+        _dlog("_vector_search executing", {"version_filter": version is not None}, "H1")
+        # #endregion
         result = await session.execute(stmt, {"q_emb": query_embedding})
+        rows = result.all()
+        # #region agent log
+        _dlog("_vector_search rows", {"count": len(rows)}, "H2")
+        # #endregion
         out: list[SearchResult] = []
-        for chunk_id, text_val, source, doc_version, distance in result.all():
+        for chunk_id, text_val, source, doc_version, distance in rows:
             confidence = 1.0 / (1.0 + float(distance))
             out.append(
                 SearchResult(
