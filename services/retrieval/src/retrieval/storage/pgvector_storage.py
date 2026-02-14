@@ -5,7 +5,7 @@ import re
 import time
 from typing import Any
 
-from sqlalchemy import Float, bindparam, cast, func, or_, select
+from sqlalchemy import bindparam, func, or_, select
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -163,9 +163,9 @@ class PgVectorStorage(Storage):
             # #endregion
             return []
 
-        dist_col = Chunk.embedding.op("<->")(bindparam("q_emb", type_=Vector(384)))
-        # Cast distance to Float so asyncpg returns a plain float (avoids vector result processor)
-        distance_col = cast(dist_col, Float).label("distance")
+        # Use l2_distance() so return_type=Float is set; op("<->") without it can yield 0 with asyncpg
+        dist_col = Chunk.embedding.l2_distance(bindparam("q_emb", type_=Vector(384)))
+        distance_col = dist_col.label("distance")
         stmt = (
             select(Chunk.id, Chunk.text, Document.source, Document.version, distance_col)
             .join(Document, Chunk.document_id == Document.id)
