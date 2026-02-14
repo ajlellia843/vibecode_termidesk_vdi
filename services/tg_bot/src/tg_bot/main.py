@@ -11,7 +11,7 @@ from shared.logging import configure_logging
 
 from tg_bot.api import OrchestratorClient
 from tg_bot.config import TgBotSettings
-from tg_bot.handlers import chat_router
+from tg_bot.handlers import chat_router, commands_router
 from tg_bot.middleware import OrchestratorClientMiddleware
 
 configure_logging(json_logs=True)
@@ -30,8 +30,10 @@ def create_bot() -> tuple[Bot, Dispatcher]:
     bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
     orchestrator_client = OrchestratorClient(settings.orchestrator_url)
+    dp.include_router(commands_router)
     dp.include_router(chat_router)
     dp.message.outer_middleware(OrchestratorClientMiddleware(orchestrator_client))
+    dp.callback_query.outer_middleware(OrchestratorClientMiddleware(orchestrator_client))
     return bot, dp
 
 

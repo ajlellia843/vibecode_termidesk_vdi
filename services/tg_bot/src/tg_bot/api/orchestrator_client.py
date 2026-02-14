@@ -28,3 +28,24 @@ class OrchestratorClient:
         cid = data.get("conversation_id")
         conv_id = UUID(cid) if cid else None
         return reply, sources, conv_id
+
+    async def users_upsert(self, telegram_id: str) -> dict:
+        url = f"{self._base_url}/api/v1/users/upsert"
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            resp = await client.post(url, json={"telegram_id": telegram_id})
+            resp.raise_for_status()
+            return resp.json()
+
+    async def users_get(self, telegram_id: str) -> dict:
+        url = f"{self._base_url}/api/v1/users/{telegram_id}"
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return resp.json()
+
+    async def users_set_version(self, telegram_id: str, version: str) -> dict:
+        url = f"{self._base_url}/api/v1/users/{telegram_id}/version"
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            resp = await client.post(url, json={"version": version})
+            resp.raise_for_status()
+            return resp.json()
