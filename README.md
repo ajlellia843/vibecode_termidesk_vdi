@@ -16,9 +16,11 @@ Telegram-бот чат-поддержки для Termidesk VDI с RAG (Retrieval
 cp .env.example .env
 # Заполните TELEGRAM_BOT_TOKEN в .env
 
-make migrate   # применить миграции БД (один раз)
+make migrate   # применить миграции БД (orchestrator + retrieval), в т.ч. таблицу orchestrator.users для выбора версии
 make up        # или: docker compose up -d
 ```
+
+Если при нажатии кнопки выбора версии появляется «Ошибка сохранения», выполните `make migrate` и перезапустите сервисы.
 
 После запуска напишите боту в Telegram — ответ идёт через mock LLM и простой retrieval. Для ответов по базе знаний сначала выполните `make ingest`.
 

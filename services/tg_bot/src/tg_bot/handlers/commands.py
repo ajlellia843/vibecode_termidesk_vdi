@@ -65,6 +65,9 @@ async def cmd_start(message: Message, orchestrator_client: OrchestratorClient) -
         await orchestrator_client.users_upsert(telegram_id)
         user = await orchestrator_client.users_get(telegram_id)
         version = user.get("termidesk_version") if isinstance(user, dict) else None
+        # #region agent log
+        _dlog("cmd_start after get", {"telegram_id": telegram_id, "version": version, "user_keys": list(user.keys()) if isinstance(user, dict) else None}, "H1")
+        # #endregion
     except Exception:
         pass
     if version:
