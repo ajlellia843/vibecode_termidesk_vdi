@@ -2,6 +2,7 @@
 from pathlib import Path
 from uuid import uuid4
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from ingest.chunking import SimpleChunker
@@ -69,18 +70,28 @@ async def run_ingest(
 
             chunks_text = chunker.chunk(content)
             embeddings = embedder.embed_texts(chunks_text) if chunks_text else []
-            for i, text in enumerate(chunks_text):
+            chunk_embeddings: list[tuple[uuid4, list[float] | None]] = []
+            for i, chunk_text in enumerate(chunks_text):
                 emb = embeddings[i] if i < len(embeddings) else None
                 chunk = Chunk(
                     id=uuid4(),
                     document_id=doc.id,
-                    text=text,
+                    text=chunk_text,
                     index_in_doc=i,
-                    embedding=emb,
+                    embedding=None,
                 )
                 session.add(chunk)
+                chunk_embeddings.append((chunk.id, emb))
                 total_chunks += 1
             await session.flush()
+            # Write embedding via raw SQL (asyncpg does not serialize vector without register_vector)
+            for cid, emb in chunk_embeddings:
+                if emb is not None:
+                    emb_str = "[" + ",".join(str(x) for x in emb) + "]"
+                    await session.execute(
+                        text("UPDATE retrieval.chunks SET embedding = CAST(:emb AS vector) WHERE id = :id"),
+                        {"emb": emb_str, "id": str(cid)},
+                    )
         await session.commit()
     await engine.dispose()
     return total_chunks
