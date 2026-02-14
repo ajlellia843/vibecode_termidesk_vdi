@@ -49,6 +49,7 @@ async def lifespan(app: FastAPI):
         max_history_messages=settings.max_history_messages,
     )
     app.state.dialog_service = dialog_service
+    app.state.session_factory = session_factory
     app.state.engine = engine
     yield
     await engine.dispose()
@@ -58,6 +59,23 @@ def create_app() -> FastAPI:
     configure_logging(json_logs=True)
     app = FastAPI(title="Orchestrator Service", version="0.1.0", lifespan=lifespan)
     app.add_middleware(RequestIdMiddleware)
+
+    # #region agent log
+    import json
+    import os
+    import traceback
+    from fastapi import Request
+    from fastapi.responses import JSONResponse
+    @app.exception_handler(Exception)
+    async def _log_exception(request: Request, exc: Exception):
+        path = os.environ.get("DEBUG_LOG_PATH", ".cursor/debug.log")
+        try:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"location": "orchestrator", "message": "exception", "data": {"type": type(exc).__name__, "message": str(exc), "path": str(request.url.path), "traceback": traceback.format_exc()}, "hypothesisId": "H2", "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+    # #endregion
 
     app.include_router(router)
 
