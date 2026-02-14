@@ -1,6 +1,7 @@
 """Shared embedder: sentence-transformers or mock backend, single contract for ingest and retrieval."""
 from __future__ import annotations
 
+import hashlib
 import os
 from typing import TYPE_CHECKING
 
@@ -50,7 +51,12 @@ class Embedder:
         if not texts:
             return []
         if self._backend == "mock":
-            return [[0.0] * self._dim for _ in texts]
+            # Deterministic per-text vector so distances vary; [0]*dim made all scores 1.0
+            out = []
+            for text in texts:
+                h = hashlib.sha256(text.encode()).digest()
+                out.append([(h[i % 32] / 255.0 - 0.5) * 2.0 for i in range(self._dim)])
+            return out
         if self._model is None:
             self._load_model()
         vectors = self._model.encode(texts, convert_to_numpy=True)
