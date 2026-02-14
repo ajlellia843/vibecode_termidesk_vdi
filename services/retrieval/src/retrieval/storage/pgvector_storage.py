@@ -185,13 +185,17 @@ class PgVectorStorage(Storage):
         _dlog("_vector_search rows", {"count": len(rows)}, "H2")
         # #endregion
         out: list[SearchResult] = []
-        for row in rows:
+        for i, row in enumerate(rows):
             chunk_id = row[0]
             text_val = row[1]
             source = row[2]
             doc_version = row[3]
             distance = row[4]
             dist_float = float(distance) if distance is not None else 0.0
+            # #region agent log
+            if i == 0:
+                _dlog("_vector_search first row distance", {"raw_distance": str(distance), "raw_type": type(distance).__name__, "dist_float": dist_float, "score": 1.0 / (1.0 + dist_float)}, "H4")
+            # #endregion
             confidence = 1.0 / (1.0 + dist_float)
             out.append(
                 SearchResult(
