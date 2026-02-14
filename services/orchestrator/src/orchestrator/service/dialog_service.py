@@ -133,6 +133,9 @@ class DialogService:
                 "top_score": top_score,
                 "threshold": self._rag_min_confidence,
             }
+            # #region agent log
+            _dlog("threshold check", {"top_score": top_score, "threshold": self._rag_min_confidence, "branch": "diagnostic" if (not rag_chunks or top_score < self._rag_min_confidence) else "answer", "scores": [round(c.score, 4) for c in rag_chunks[:5]]}, "H1")
+            # #endregion
 
             # diagnostic: empty or below threshold — do not call LLM
             if not rag_chunks or top_score < self._rag_min_confidence:
