@@ -1,10 +1,22 @@
 """Handlers for /start and /version: welcome and version selection."""
+import json
+import os
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from tg_bot.api import OrchestratorClient
 
 router = Router(name="commands")
+
+# #region agent log
+def _dlog(msg: str, data: dict, hid: str) -> None:
+    try:
+        path = os.environ.get("DEBUG_LOG_PATH", ".cursor/debug.log")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"location": "commands.py", "message": msg, "data": data, "hypothesisId": hid, "timestamp": __import__("time").time() * 1000}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+# #endregion
 
 TERMIDESK_VERSIONS = (
     "6.1 (latest)",
@@ -81,5 +93,15 @@ async def callback_version(callback: CallbackQuery, orchestrator_client: Orchest
         await orchestrator_client.users_set_version(telegram_id, version)
         await callback.answer()
         await callback.message.answer(f"Ок, установил версию {version}.")
-    except Exception:
+    except Exception as e:
+        # #region agent log
+        data = {"type": type(e).__name__, "message": str(e)[:300]}
+        if hasattr(e, "response"):
+            try:
+                data["status"] = getattr(e.response, "status_code", None)
+                data["body"] = (e.response.text or "")[:200]
+            except Exception:
+                pass
+        _dlog("callback_version error", data, "H2")
+        # #endregion
         await callback.answer("Ошибка сохранения. Попробуйте ещё раз.", show_alert=True)
