@@ -1,6 +1,7 @@
 """Dialog service: retrieval + prompt assembly + LLM + persistence."""
 import json
 import os
+import re
 import time
 from uuid import UUID
 
@@ -47,6 +48,17 @@ def _build_diagnostic_reply(questions_max: int) -> str:
         parts.append(f"• {q}")
     parts.extend(["", DIAGNOSTIC_COLLECT])
     return "\n".join(parts)
+
+
+def _is_likely_gibberish(message: str) -> bool:
+    """Single token or no Cyrillic with very few words often means off-topic/gibberish for RU support."""
+    words = re.findall(r"\w+", message.strip())
+    if len(words) < 2:
+        return True
+    has_cyrillic = any(any("\u0400" <= c <= "\u04ff" for c in w) for w in words)
+    if not has_cyrillic and len(words) < 3:
+        return True
+    return False
 
 
 class DialogService:
@@ -139,6 +151,24 @@ class DialogService:
 
             # diagnostic: empty or below threshold — do not call LLM
             if not rag_chunks or top_score < self._rag_min_confidence:
+                reply_text = _build_diagnostic_reply(self._diagnostic_questions_max)
+                await msg_repo.add(conv.id, "user", user_message)
+                await msg_repo.add(conv.id, "assistant", reply_text)
+                await session.commit()
+                return ChatResult(
+                    reply=reply_text,
+                    sources=[],
+                    conversation_id=conv.id,
+                    mode="diagnostic",
+                    version=termidesk_version,
+                    rag=rag_info,
+                )
+
+            # message looks like gibberish (single token / no Cyrillic) — force diagnostic to avoid RAG noise
+            if _is_likely_gibberish(user_message):
+                # #region agent log
+                _dlog("gibberish override", {"user_message_preview": user_message[:40], "top_score": top_score}, "H1")
+                # #endregion
                 reply_text = _build_diagnostic_reply(self._diagnostic_questions_max)
                 await msg_repo.add(conv.id, "user", user_message)
                 await msg_repo.add(conv.id, "assistant", reply_text)
