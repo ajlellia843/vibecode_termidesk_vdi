@@ -1,4 +1,5 @@
 """Ingest pipeline: load files -> chunk -> embed -> write to DB."""
+import sys
 from pathlib import Path
 from uuid import uuid4
 
@@ -85,13 +86,19 @@ async def run_ingest(
                 total_chunks += 1
             await session.flush()
             # Write embedding via raw SQL (asyncpg does not serialize vector without register_vector)
+            num_emb = 0
             for cid, emb in chunk_embeddings:
                 if emb is not None:
                     emb_str = "[" + ",".join(str(x) for x in emb) + "]"
-                    await session.execute(
-                        text("UPDATE retrieval.chunks SET embedding = CAST(:emb AS vector) WHERE id = :id"),
+                    result = await session.execute(
+                        text(
+                            "UPDATE retrieval.chunks SET embedding = CAST(:emb AS vector) WHERE id = CAST(:id AS uuid)"
+                        ),
                         {"emb": emb_str, "id": str(cid)},
                     )
+                    num_emb += result.rowcount
+            if num_emb > 0:
+                print(f"[ingest] Updated {num_emb} chunk embeddings via SQL", file=sys.stderr)
         await session.commit()
     await engine.dispose()
     return total_chunks
