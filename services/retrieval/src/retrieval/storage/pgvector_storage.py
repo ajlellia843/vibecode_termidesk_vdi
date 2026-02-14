@@ -5,7 +5,7 @@ import re
 import time
 from typing import Any
 
-from sqlalchemy import bindparam, or_, select
+from sqlalchemy import bindparam, func, or_, select
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -142,6 +142,13 @@ class PgVectorStorage(Storage):
         """Vector similarity search (L2). Requires embedder and chunks.embedding."""
         # #region agent log
         _dlog("_vector_search start", {"retrieval_mode": self._retrieval_mode, "version": version}, "H4")
+        # Diagnostic: total chunks vs chunks with embedding (same DB?)
+        try:
+            r_tot = await session.execute(select(func.count()).select_from(Chunk))
+            r_emb = await session.execute(select(func.count()).select_from(Chunk).where(Chunk.embedding.isnot(None)))
+            _dlog("_vector_search DB diagnostic", {"total_chunks": r_tot.scalar() or 0, "chunks_with_embedding": r_emb.scalar() or 0}, "H2")
+        except Exception as e:
+            _dlog("_vector_search DB diagnostic failed", {"exc_type": type(e).__name__, "exc_msg": str(e)[:200]}, "H2")
         # #endregion
         embedder = self._embedder
         if embedder is None:
