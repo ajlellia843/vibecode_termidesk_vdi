@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -51,11 +52,19 @@ class Embedder:
         if not texts:
             return []
         if self._backend == "mock":
-            # Deterministic per-text vector so distances vary; [0]*dim made all scores 1.0
+            # Bag-of-words style: overlapping words => closer vectors so relevant docs score higher
             out = []
             for text in texts:
-                h = hashlib.sha256(text.encode()).digest()
-                out.append([(h[i % 32] / 255.0 - 0.5) * 2.0 for i in range(self._dim)])
+                words = re.findall(r"\w+", text.lower())
+                vec = [0.0] * self._dim
+                for w in words:
+                    if len(w) >= 2:
+                        idx = int(hashlib.sha256(w.encode()).hexdigest(), 16) % self._dim
+                        vec[idx] += 1.0
+                norm = sum(x * x for x in vec) ** 0.5
+                if norm > 0:
+                    vec = [x / norm for x in vec]
+                out.append(vec)
             return out
         if self._model is None:
             self._load_model()
