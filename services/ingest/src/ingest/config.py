@@ -12,3 +12,4 @@ class IngestSettings(BaseAppSettings):
     chunk_size: int = 500
     chunk_overlap: int = 50
     embedding_dim: int = 384
+    kb_default_version: str = "6.1 (latest)"

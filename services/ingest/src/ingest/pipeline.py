@@ -1,4 +1,4 @@
-"""Ingest pipeline: load files -> chunk -> embed (stub) -> write to DB."""
+"""Ingest pipeline: load files -> chunk -> embed -> write to DB."""
 from pathlib import Path
 from uuid import uuid4
 
@@ -6,8 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from ingest.chunking import SimpleChunker
 from ingest.db.models import Chunk, Document
-from ingest.embedding import StubEmbedder
 from ingest.loaders import PDFLoader, TextLoader
+from shared.embedder import Embedder
 
 
 def collect_files(knowledge_path: str) -> list[Path]:
@@ -33,13 +33,16 @@ async def run_ingest(
     knowledge_path: str,
     chunk_size: int = 500,
     chunk_overlap: int = 50,
+    kb_default_version: str = "6.1 (latest)",
+    embedder: Embedder | None = None,
 ) -> int:
     engine = create_async_engine(database_url, echo=False)
     session_factory = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
     )
     chunker = SimpleChunker(chunk_size=chunk_size, overlap=chunk_overlap)
-    embedder = StubEmbedder(dim=384)
+    if embedder is None:
+        embedder = Embedder()
 
     files = collect_files(knowledge_path)
     total_chunks = 0
@@ -59,18 +62,21 @@ async def run_ingest(
                 source=source,
                 path=doc_path,
                 meta={"ingest_path": doc_path},
+                version=kb_default_version,
             )
             session.add(doc)
             await session.flush()
 
             chunks_text = chunker.chunk(content)
+            embeddings = embedder.embed_texts(chunks_text) if chunks_text else []
             for i, text in enumerate(chunks_text):
-                embedder.embed(text)  # stub; real impl would store in Chunk.embedding
+                emb = embeddings[i] if i < len(embeddings) else None
                 chunk = Chunk(
                     id=uuid4(),
                     document_id=doc.id,
                     text=text,
                     index_in_doc=i,
+                    embedding=emb,
                 )
                 session.add(chunk)
                 total_chunks += 1

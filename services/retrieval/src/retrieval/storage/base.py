@@ -10,12 +10,17 @@ class SearchResult:
     text: str
     source: str
     score: float
+    distance: float | None = None
+    confidence: float = 0.0
+    version: str | None = None
 
 
 class Storage(ABC):
     """Abstract storage for document chunks and vector/text search."""
 
     @abstractmethod
-    async def search(self, query: str, top_k: int = 5) -> list[SearchResult]:
+    async def search(
+        self, query: str, top_k: int = 5, version: str | None = None
+    ) -> list[SearchResult]:
         """Search for relevant chunks. Returns list ordered by relevance (score)."""
         ...

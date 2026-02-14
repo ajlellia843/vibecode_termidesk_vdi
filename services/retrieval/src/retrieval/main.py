@@ -12,6 +12,8 @@ from shared.logging import configure_logging
 from shared.middleware import RequestIdMiddleware
 from shared.schemas import HealthResponse
 
+from shared.embedder import Embedder
+
 from retrieval.api.routes import router
 from retrieval.config import RetrievalSettings
 from retrieval.service import SearchService
@@ -56,7 +58,16 @@ async def lifespan(app: FastAPI):
         class_=AsyncSession,
         expire_on_commit=False,
     )
-    storage = PgVectorStorage(session_factory)
+    embedder = Embedder(
+        backend=settings.embedder_backend,
+        model_name=settings.embedder_model_name,
+        dim=settings.embedding_dim,
+    )
+    storage = PgVectorStorage(
+        session_factory,
+        embedder=embedder,
+        retrieval_mode=settings.retrieval_mode,
+    )
     app.state.search_service = SearchService(storage)
     app.state.engine = engine
     yield

@@ -10,10 +10,20 @@ router = APIRouter(tags=["retrieval"])
 @router.post("/search", response_model=SearchResponse)  # POST /search for orchestrator
 async def search(body: SearchRequest, request: Request) -> SearchResponse:
     service: SearchService = request.app.state.search_service
-    results = await service.search(body.query, top_k=body.top_k)
+    results = await service.search(
+        body.query, top_k=body.top_k, version=body.version
+    )
     return SearchResponse(
         results=[
-            {"chunk_id": r.chunk_id, "text": r.text, "source": r.source, "score": r.score}
+            {
+                "chunk_id": r.chunk_id,
+                "text": r.text,
+                "source": r.source,
+                "score": r.score,
+                "confidence": r.confidence,
+                "distance": r.distance,
+                "version": r.version,
+            }
             for r in results
         ]
     )

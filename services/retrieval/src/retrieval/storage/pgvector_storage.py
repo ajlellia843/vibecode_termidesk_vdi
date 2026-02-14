@@ -1,10 +1,11 @@
-"""PgVector storage with optional text-search fallback when embeddings are missing."""
+"""PgVector storage: vector search (pgvector), optional text/hybrid fallback."""
 import json
 import os
 import re
 import time
+from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import bindparam, or_, select
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,80 +23,95 @@ def _dlog(msg: str, data: dict, hypothesis_id: str) -> None:
 # #endregion
 
 
+def _get_embedder():  # lazy import to avoid loading sentence_transformers at import time
+    from shared.embedder import Embedder
+    return Embedder
+
+
 class PgVectorStorage(Storage):
-    """Postgres storage: vector search when embeddings exist, else ILIKE text search."""
+    """Postgres storage: vector and/or text search by RETRIEVAL_MODE."""
 
-    def __init__(self, session_factory: type[AsyncSession]) -> None:
+    def __init__(
+        self,
+        session_factory: type[AsyncSession],
+        embedder: Any | None = None,
+        retrieval_mode: str = "vector",
+    ) -> None:
         self._session_factory = session_factory
+        self._embedder = embedder
+        self._retrieval_mode = (retrieval_mode or "vector").lower()
 
-    async def search(self, query: str, top_k: int = 5) -> list[SearchResult]:
+    async def search(
+        self, query: str, top_k: int = 5, version: str | None = None
+    ) -> list[SearchResult]:
         # #region agent log
-        _dlog("search entry", {"query": query[:50], "top_k": top_k}, "H1")
+        _dlog("search entry", {"query": query[:50], "top_k": top_k, "version": version}, "H1")
         # #endregion
         async with self._session_factory() as session:
-            try:
-                # #region agent log
-                _dlog("before vector_search", {}, "H1")
-                # #endregion
-                out = await self._vector_search(session, query, top_k)
-                # #region agent log
-                _dlog("vector_search ok", {"len": len(out)}, "H1")
-                # #endregion
-                return out
-            except Exception as e:
-                # #region agent log
-                _dlog("search except", {"exc_type": type(e).__name__, "exc_msg": str(e)[:200]}, "H1")
-                # #endregion
-                if isinstance(e, ProgrammingError) and "does not exist" in str(e):
-                    # #region agent log
-                    _dlog("missing table, return empty", {}, "H1")
-                    # #endregion
+            if self._retrieval_mode == "text":
+                return await self._text_search(session, query, top_k, version)
+            if self._retrieval_mode == "vector":
+                try:
+                    out = await self._vector_search(session, query, top_k, version)
+                    return out
+                except ProgrammingError as e:
+                    if "does not exist" in str(e):
+                        return []
+                    raise
+                except Exception:
+                    await session.rollback()
                     return []
+            # hybrid: vector first, then text if empty
+            try:
+                out = await self._vector_search(session, query, top_k, version)
+                if out:
+                    return out
+            except (ProgrammingError, Exception):
                 await session.rollback()
-                # #region agent log
-                _dlog("after rollback, retry _text_search", {}, "H1")
-                # #endregion
-                out2 = await self._text_search(session, query, top_k)
-                # #region agent log
-                _dlog("retry _text_search ok", {"len": len(out2)}, "H1")
-                # #endregion
-                return out2
+            return await self._text_search(session, query, top_k, version)
 
-    async def _text_search(self, session: AsyncSession, query: str, top_k: int) -> list[SearchResult]:
-        """Simple ILIKE search when vector search not available or no embeddings."""
+    async def _text_search(
+        self,
+        session: AsyncSession,
+        query: str,
+        top_k: int,
+        version: str | None = None,
+    ) -> list[SearchResult]:
+        """ILIKE + word-based fallback; no q_any. Returns [] when nothing matches."""
         # #region agent log
         _dlog("_text_search execute", {"query": query[:30]}, "H3")
         # #endregion
-        q = (
-            select(Chunk.id, Chunk.text, Document.source)
+        base = (
+            select(Chunk.id, Chunk.text, Document.source, Document.version)
             .join(Document, Chunk.document_id == Document.id)
-            .where(Chunk.text.ilike(f"%{query}%"))
-            .limit(top_k * 2)
         )
+        if version is not None:
+            base = base.where(Document.version == version)
+        q = base.where(Chunk.text.ilike(f"%{query}%")).limit(top_k * 2)
         result = await session.execute(q)
         rows = result.all()
         out: list[SearchResult] = []
-        for i, (chunk_id, text_val, source) in enumerate(rows[:top_k]):
+        for i, (chunk_id, text_val, source, doc_version) in enumerate(rows[:top_k]):
             out.append(
                 SearchResult(
                     chunk_id=str(chunk_id),
                     text=text_val or "",
                     source=source or "",
                     score=1.0 - (i * 0.05),
+                    confidence=1.0 - (i * 0.05),
+                    version=doc_version,
                 )
             )
         if not out and query.strip():
             words = [w for w in re.split(r"\W+", query) if len(w) >= 2][:6]
             if words:
                 q_words = (
-                    select(Chunk.id, Chunk.text, Document.source)
-                    .join(Document, Chunk.document_id == Document.id)
-                    .where(or_(*[Chunk.text.ilike(f"%{w}%") for w in words]))
+                    base.where(or_(*[Chunk.text.ilike(f"%{w}%") for w in words]))
                     .limit(top_k * 2)
                 )
                 r_words = await session.execute(q_words)
                 seen = set()
-                for (chunk_id, text_val, source) in r_words.all():
+                for (chunk_id, text_val, source, doc_version) in r_words.all():
                     if chunk_id not in seen and len(out) < top_k:
                         seen.add(chunk_id)
                         out.append(
@@ -104,27 +120,54 @@ class PgVectorStorage(Storage):
                                 text=text_val or "",
                                 source=source or "",
                                 score=0.7,
+                                confidence=0.7,
+                                version=doc_version,
                             )
                         )
-            if not out:
-                q_any = (
-                    select(Chunk.id, Chunk.text, Document.source)
-                    .join(Document, Chunk.document_id == Document.id)
-                    .limit(top_k)
-                )
-                r2 = await session.execute(q_any)
-                for i, (chunk_id, text_val, source) in enumerate(r2.all()):
-                    out.append(
-                        SearchResult(
-                            chunk_id=str(chunk_id),
-                            text=text_val or "",
-                            source=source or "",
-                            score=0.5 - (i * 0.05),
-                        )
-                    )
         return out
 
-    async def _vector_search(self, session: AsyncSession, query: str, top_k: int) -> list[SearchResult]:
-        """Vector similarity search using pgvector (requires query embedding - stub for now)."""
-        # For MVP without embedder: use text search from this class
-        return await self._text_search(session, query, top_k)
+    async def _vector_search(
+        self,
+        session: AsyncSession,
+        query: str,
+        top_k: int,
+        version: str | None = None,
+    ) -> list[SearchResult]:
+        """Vector similarity search (L2). Requires embedder and chunks.embedding."""
+        embedder = self._embedder
+        if embedder is None:
+            embedder = _get_embedder()()
+        query_embedding = embedder.embed_texts([query])[0]
+
+        try:
+            from pgvector.sqlalchemy import Vector
+        except ImportError:
+            return []
+
+        dist_col = Chunk.embedding.op("<->")(bindparam("q_emb", type_=Vector(384)))
+        stmt = (
+            select(Chunk.id, Chunk.text, Document.source, Document.version, dist_col)
+            .join(Document, Chunk.document_id == Document.id)
+            .where(Chunk.embedding.isnot(None))
+            .order_by(dist_col)
+            .limit(top_k)
+        )
+        if version is not None:
+            stmt = stmt.where(Document.version == version)
+
+        result = await session.execute(stmt, {"q_emb": query_embedding})
+        out: list[SearchResult] = []
+        for chunk_id, text_val, source, doc_version, distance in result.all():
+            confidence = 1.0 / (1.0 + float(distance))
+            out.append(
+                SearchResult(
+                    chunk_id=str(chunk_id),
+                    text=text_val or "",
+                    source=source or "",
+                    score=confidence,
+                    distance=float(distance),
+                    confidence=confidence,
+                    version=doc_version,
+                )
+            )
+        return out

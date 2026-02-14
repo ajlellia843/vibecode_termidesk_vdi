@@ -11,3 +11,6 @@ class RetrievalSettings(BaseAppSettings):
     port: int = 8001
     database_url: str = "postgresql+asyncpg://app:changeme@localhost:5432/termidesk_bot"
     embedding_dim: int = 384
+    retrieval_mode: str = "vector"  # vector | text | hybrid
+    embedder_backend: str = "mock"  # sentence_transformers | mock
+    embedder_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"

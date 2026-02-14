@@ -25,6 +25,7 @@ class Document(Base):
     source: Mapped[str] = mapped_column(String(512), nullable=False)
     path: Mapped[str] = mapped_column(String(1024), nullable=False)
     meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    version: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
     chunks: Mapped[list["Chunk"]] = relationship("Chunk", back_populates="document")
@@ -46,7 +47,9 @@ class Chunk(Base):
     )
     text: Mapped[str] = mapped_column(Text, nullable=False)
     index_in_doc: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    # embedding: optional, set by migration when pgvector is available
+    embedding: Mapped[list[float] | None] = mapped_column(
+        _vector_type(384), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
     document: Mapped["Document"] = relationship("Document", back_populates="chunks")

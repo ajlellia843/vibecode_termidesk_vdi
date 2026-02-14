@@ -14,6 +14,7 @@ def main() -> None:
             knowledge_path=settings.knowledge_path,
             chunk_size=settings.chunk_size,
             chunk_overlap=settings.chunk_overlap,
+            kb_default_version=settings.kb_default_version,
         )
     )
     print(f"Ingested {n} chunks", file=sys.stderr)
