@@ -5,7 +5,7 @@ import re
 import time
 from typing import Any
 
-from sqlalchemy import bindparam, func, or_, select
+from sqlalchemy import Float, bindparam, cast, func, or_, select
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -164,8 +164,10 @@ class PgVectorStorage(Storage):
             return []
 
         dist_col = Chunk.embedding.op("<->")(bindparam("q_emb", type_=Vector(384)))
+        # Cast distance to Float so asyncpg returns a plain float (avoids vector result processor)
+        distance_col = cast(dist_col, Float).label("distance")
         stmt = (
-            select(Chunk.id, Chunk.text, Document.source, Document.version, dist_col)
+            select(Chunk.id, Chunk.text, Document.source, Document.version, distance_col)
             .join(Document, Chunk.document_id == Document.id)
             .where(Chunk.embedding.isnot(None))
             .order_by(dist_col)
@@ -183,15 +185,21 @@ class PgVectorStorage(Storage):
         _dlog("_vector_search rows", {"count": len(rows)}, "H2")
         # #endregion
         out: list[SearchResult] = []
-        for chunk_id, text_val, source, doc_version, distance in rows:
-            confidence = 1.0 / (1.0 + float(distance))
+        for row in rows:
+            chunk_id = row[0]
+            text_val = row[1]
+            source = row[2]
+            doc_version = row[3]
+            distance = row[4]
+            dist_float = float(distance) if distance is not None else 0.0
+            confidence = 1.0 / (1.0 + dist_float)
             out.append(
                 SearchResult(
                     chunk_id=str(chunk_id),
                     text=text_val or "",
                     source=source or "",
                     score=confidence,
-                    distance=float(distance),
+                    distance=dist_float,
                     confidence=confidence,
                     version=doc_version,
                 )
