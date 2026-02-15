@@ -1,8 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+POSTGRES_USER="${POSTGRES_USER:-app}"
+POSTGRES_DB="${POSTGRES_DB:-termidesk_bot}"
+
+echo "=== Ensuring postgres is running ==="
+docker compose up -d postgres
+
+echo "=== Waiting for postgres to be ready ==="
+for i in $(seq 1 60); do
+  if docker compose exec -T postgres pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" 2>/dev/null; then
+    break
+  fi
+  if [ "$i" -eq 60 ]; then
+    echo "ERROR: postgres did not become ready in time. Check: docker compose logs postgres"
+    exit 1
+  fi
+  sleep 1
+done
+
 echo "=== Truncating retrieval.documents and retrieval.chunks ==="
-docker compose exec postgres psql -U "${POSTGRES_USER:-app}" -d "${POSTGRES_DB:-termidesk_bot}" \
+docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
   -c "TRUNCATE retrieval.documents CASCADE;"
 
 echo "=== Running ingest ==="
