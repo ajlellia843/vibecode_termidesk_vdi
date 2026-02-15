@@ -278,6 +278,13 @@ class DialogService:
                 self._rag_max_chunks,
                 self._rag_max_context_chars,
             )
+            # #region agent log
+            for i, c in enumerate(context_chunks):
+                _dlog("rag_chunk_boundary", {
+                    "idx": i, "source": c.source, "position": getattr(c, "position", None),
+                    "text_head": (c.text or "")[:120], "text_tail": (c.text or "")[-120:] if (c.text and len(c.text) > 120) else (c.text or ""),
+                }, "H1")
+            # #endregion
             prompt = build_full_prompt(
                 user_message,
                 context_chunks,
@@ -287,6 +294,9 @@ class DialogService:
             )
             # #region agent log
             _dlog("branch_taken", {"branch": "answer", "context_chunks": len(context_chunks)}, "H1")
+            ctx_start = prompt.find("Источники:")
+            ctx_snippet = prompt[ctx_start:ctx_start + 2200] if ctx_start >= 0 else prompt[:2200]
+            _dlog("prompt_context_snippet", {"len": len(ctx_snippet), "snippet": ctx_snippet}, "H2")
             _dlog("before llm.generate", {"prompt_len": len(prompt)}, "H2")
             # #endregion
             import time as _time
@@ -295,6 +305,10 @@ class DialogService:
                 reply_text = await self._llm.generate(prompt, max_tokens=512)
                 # #region agent log
                 _dlog("llm_ok", {"reply_len": len(reply_text)}, "H3")
+                _dlog("llm_reply_snippet", {
+                    "head": (reply_text or "")[:500],
+                    "tail": (reply_text or "")[-450:] if reply_text and len(reply_text) > 450 else (reply_text or ""),
+                }, "H3")
                 # #endregion
             except Exception as e:
                 # #region agent log
