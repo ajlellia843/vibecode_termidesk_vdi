@@ -67,6 +67,8 @@ async def lifespan(app: FastAPI):
         session_factory,
         embedder=embedder,
         retrieval_mode=settings.retrieval_mode,
+        min_score=settings.min_score,
+        kb_latest_version=settings.kb_latest_version,
     )
     app.state.search_service = SearchService(storage)
     app.state.engine = engine

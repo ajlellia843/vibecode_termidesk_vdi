@@ -1,7 +1,10 @@
 """LLM service entrypoint - gateway to local inference or mock."""
+import asyncio
+import json
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse
 from prometheus_client import make_asgi_app
 
 from shared.logging import configure_logging
@@ -56,9 +59,38 @@ def create_app() -> FastAPI:
 
     @app.post("/generate", response_model=GenerateResponse)
     async def generate(body: GenerateRequest, request: Request) -> GenerateResponse:
+        settings = get_settings()
         client = request.app.state.llm_client
-        text = await client.generate(body.prompt, max_tokens=body.max_tokens)
+        try:
+            text = await asyncio.wait_for(
+                client.generate(body.prompt, max_tokens=body.max_tokens),
+                timeout=settings.generate_timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            return GenerateResponse(
+                text="[LLM timeout] Ответ не получен в отведённое время. Попробуйте короче запрос или повторите позже."
+            )
         return GenerateResponse(text=text)
+
+    @app.post("/generate/stream")
+    async def generate_stream(body: GenerateRequest, request: Request):
+        """Streaming endpoint (stub: returns single SSE chunk until real LLM supports stream)."""
+        settings = get_settings()
+        client = request.app.state.llm_client
+        async def event_stream():
+            try:
+                text = await asyncio.wait_for(
+                    client.generate(body.prompt, max_tokens=body.max_tokens),
+                    timeout=settings.generate_timeout_seconds,
+                )
+                yield f"data: {json.dumps(text)}\n\n"
+            except asyncio.TimeoutError:
+                yield "data: [LLM timeout]\n\n"
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache"},
+        )
 
     global _app
     _app = app

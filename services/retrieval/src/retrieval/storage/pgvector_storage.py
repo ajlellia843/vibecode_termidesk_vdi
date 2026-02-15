@@ -23,6 +23,25 @@ def _dlog(msg: str, data: dict, hypothesis_id: str) -> None:
 # #endregion
 
 
+def _query_word_overlap(query: str, text: str) -> int:
+    """Number of query words (len>=2) that appear in text. For tie-break when distances are equal."""
+    q_words = {w for w in re.findall(r"\w+", query.lower()) if len(w) >= 2}
+    if not q_words:
+        return 0
+    text_words = {w for w in re.findall(r"\w+", (text or "").lower()) if len(w) >= 2}
+    return len(q_words & text_words)
+
+
+def _keyword_score(query: str, text: str) -> float:
+    """BM25-like simplified: fraction of query words found in text, in [0, 1]."""
+    q_words = [w for w in re.findall(r"\w+", query.lower()) if len(w) >= 2]
+    if not q_words:
+        return 0.0
+    text_lower = (text or "").lower()
+    hits = sum(1 for w in q_words if w in text_lower)
+    return min(1.0, hits / len(q_words))
+
+
 def _get_embedder():  # lazy import to avoid loading sentence_transformers at import time
     from shared.embedder import Embedder
     return Embedder
@@ -36,23 +55,41 @@ class PgVectorStorage(Storage):
         session_factory: type[AsyncSession],
         embedder: Any | None = None,
         retrieval_mode: str = "vector",
+        min_score: float = 0.35,
+        kb_latest_version: str = "6.1 (latest)",
     ) -> None:
         self._session_factory = session_factory
         self._embedder = embedder
         self._retrieval_mode = (retrieval_mode or "vector").lower()
+        self._min_score = min_score
+        self._kb_latest_version = kb_latest_version
 
     async def search(
         self, query: str, top_k: int = 5, version: str | None = None
     ) -> list[SearchResult]:
+        effective_version = version if version is not None else self._kb_latest_version
         # #region agent log
-        _dlog("search entry", {"query": query[:50], "top_k": top_k, "version": version}, "H1")
+        _dlog("search entry", {"query": query[:50], "top_k": top_k, "version": effective_version}, "H1")
         # #endregion
         async with self._session_factory() as session:
             if self._retrieval_mode == "text":
-                return await self._text_search(session, query, top_k, version)
-            if self._retrieval_mode == "vector":
+                return await self._text_search(session, query, top_k, effective_version)
+            if self._retrieval_mode in ("vector", "hybrid"):
                 try:
-                    out = await self._vector_search(session, query, top_k, version)
+                    out = await self._vector_search(
+                        session, query, top_k, effective_version
+                    )
+                    top_score = max((r.score for r in out), default=0.0)
+                    try:
+                        import structlog
+                        structlog.get_logger().info(
+                            "retrieval_search",
+                            query=query[:100],
+                            top_score=round(top_score, 4),
+                            retrieved_count=len(out),
+                        )
+                    except Exception:
+                        _dlog("search result", {"top_score": top_score, "retrieved_count": len(out)}, "H1")
                     return out
                 except ProgrammingError as e:
                     # #region agent log
@@ -67,14 +104,7 @@ class PgVectorStorage(Storage):
                     # #endregion
                     await session.rollback()
                     return []
-            # hybrid: vector first, then text if empty
-            try:
-                out = await self._vector_search(session, query, top_k, version)
-                if out:
-                    return out
-            except (ProgrammingError, Exception):
-                await session.rollback()
-            return await self._text_search(session, query, top_k, version)
+            return []
 
     async def _text_search(
         self,
@@ -88,16 +118,28 @@ class PgVectorStorage(Storage):
         _dlog("_text_search execute", {"query": query[:30]}, "H3")
         # #endregion
         base = (
-            select(Chunk.id, Chunk.text, Document.source, Document.version)
+            select(
+                Chunk.id,
+                Chunk.text,
+                Document.source,
+                Document.version,
+                Chunk.section_title,
+                Chunk.document_title,
+                Chunk.position,
+            )
             .join(Document, Chunk.document_id == Document.id)
+            .where(Document.version == version)
         )
-        if version is not None:
-            base = base.where(Document.version == version)
         q = base.where(Chunk.text.ilike(f"%{query}%")).limit(top_k * 2)
         result = await session.execute(q)
         rows = result.all()
         out: list[SearchResult] = []
-        for i, (chunk_id, text_val, source, doc_version) in enumerate(rows[:top_k]):
+        for i, row in enumerate(rows[:top_k]):
+            chunk_id, text_val, source, doc_version = row[0], row[1], row[2], row[3]
+            section_title = row[4] if len(row) > 4 else None
+            document_title = row[5] if len(row) > 5 else None
+            position = int(row[6]) if len(row) > 6 else 0
+            doc_title = (document_title or source or "").strip() or None
             out.append(
                 SearchResult(
                     chunk_id=str(chunk_id),
@@ -106,18 +148,25 @@ class PgVectorStorage(Storage):
                     score=1.0 - (i * 0.05),
                     confidence=1.0 - (i * 0.05),
                     version=doc_version,
+                    document_title=doc_title,
+                    section_title=(section_title or "").strip() if section_title else None,
+                    position=position,
                 )
             )
         if not out and query.strip():
             words = [w for w in re.split(r"\W+", query) if len(w) >= 2][:6]
             if words:
-                q_words = (
-                    base.where(or_(*[Chunk.text.ilike(f"%{w}%") for w in words]))
-                    .limit(top_k * 2)
-                )
+                q_words = base.where(
+                    or_(*[Chunk.text.ilike(f"%{w}%") for w in words])
+                ).limit(top_k * 2)
                 r_words = await session.execute(q_words)
                 seen = set()
-                for (chunk_id, text_val, source, doc_version) in r_words.all():
+                for row in r_words.all():
+                    chunk_id, text_val, source, doc_version = row[0], row[1], row[2], row[3]
+                    section_title = row[4] if len(row) > 4 else None
+                    document_title = row[5] if len(row) > 5 else None
+                    position = int(row[6]) if len(row) > 6 else 0
+                    doc_title = (document_title or source or "").strip() or None
                     if chunk_id not in seen and len(out) < top_k:
                         seen.add(chunk_id)
                         out.append(
@@ -128,6 +177,9 @@ class PgVectorStorage(Storage):
                                 score=0.7,
                                 confidence=0.7,
                                 version=doc_version,
+                                document_title=doc_title,
+                                section_title=(section_title or "").strip() if section_title else None,
+                                position=position,
                             )
                         )
         return out
@@ -163,21 +215,28 @@ class PgVectorStorage(Storage):
             # #endregion
             return []
 
-        # Use l2_distance() so return_type=Float is set; op("<->") without it can yield 0 with asyncpg
+        # Use l2_distance() so return_type=Float is set
         dist_col = Chunk.embedding.l2_distance(bindparam("q_emb", type_=Vector(384)))
         distance_col = dist_col.label("distance")
         stmt = (
-            select(Chunk.id, Chunk.text, Document.source, Document.version, distance_col)
+            select(
+                Chunk.id,
+                Chunk.text,
+                Document.source,
+                Document.version,
+                Chunk.section_title,
+                Chunk.document_title,
+                Chunk.position,
+                distance_col,
+            )
             .join(Document, Chunk.document_id == Document.id)
             .where(Chunk.embedding.isnot(None))
             .order_by(dist_col)
-            .limit(top_k)
+            .limit(top_k * 2)
         )
-        if version is not None:
-            stmt = stmt.where(Document.version == version)
-
+        stmt = stmt.where(Document.version == version)
         # #region agent log
-        _dlog("_vector_search executing", {"version_filter": version is not None}, "H1")
+        _dlog("_vector_search executing", {"version_filter": True}, "H1")
         # #endregion
         result = await session.execute(stmt, {"q_emb": query_embedding})
         rows = result.all()
@@ -185,27 +244,41 @@ class PgVectorStorage(Storage):
         _dlog("_vector_search rows", {"count": len(rows)}, "H2")
         # #endregion
         out: list[SearchResult] = []
-        for i, row in enumerate(rows):
+        for row in rows:
             chunk_id = row[0]
             text_val = row[1]
             source = row[2]
             doc_version = row[3]
-            distance = row[4]
+            section_title = row[4] if len(row) > 4 else None
+            document_title = row[5] if len(row) > 5 else None
+            position = int(row[6]) if len(row) > 6 else 0
+            distance = row[-1]
             dist_float = float(distance) if distance is not None else 0.0
-            # #region agent log
-            if i == 0:
-                _dlog("_vector_search first row distance", {"raw_distance": str(distance), "raw_type": type(distance).__name__, "dist_float": dist_float, "score": 1.0 / (1.0 + dist_float)}, "H4")
-            # #endregion
-            confidence = 1.0 / (1.0 + dist_float)
+            vector_confidence = 1.0 / (1.0 + dist_float)
+            kw_score = _keyword_score(query, text_val or "")
+            final_score = 0.8 * vector_confidence + 0.2 * kw_score
+            if final_score < self._min_score:
+                continue
+            doc_title = (document_title or source or "").strip() or None
             out.append(
                 SearchResult(
                     chunk_id=str(chunk_id),
                     text=text_val or "",
                     source=source or "",
-                    score=confidence,
+                    score=final_score,
                     distance=dist_float,
-                    confidence=confidence,
+                    confidence=vector_confidence,
                     version=doc_version,
+                    document_title=doc_title,
+                    section_title=(section_title or "").strip() if section_title else None,
+                    position=position,
                 )
             )
-        return out
+        out.sort(
+            key=lambda sr: (
+                -sr.score,
+                sr.distance or 0.0,
+                -_query_word_overlap(query, sr.text),
+            )
+        )
+        return out[:top_k]

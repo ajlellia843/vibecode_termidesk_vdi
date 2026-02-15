@@ -13,6 +13,9 @@ class SearchResult:
     distance: float | None = None
     confidence: float = 0.0
     version: str | None = None
+    document_title: str | None = None
+    section_title: str | None = None
+    position: int = 0
 
 
 class Storage(ABC):

@@ -50,6 +50,70 @@ def _build_diagnostic_reply(questions_max: int) -> str:
     return "\n".join(parts)
 
 
+def _merge_adjacent_chunks(chunks: list[RetrievalResultItem]) -> list[RetrievalResultItem]:
+    """Merge consecutive chunks from same document (same document_title/source, consecutive position)."""
+    if not chunks:
+        return []
+    key = lambda c: (c.document_title or c.source or "", c.position)
+    sorted_chunks = sorted(chunks, key=key)
+    merged: list[RetrievalResultItem] = []
+    current_doc = None
+    current_pos = -2
+    current_text: list[str] = []
+    current_item: RetrievalResultItem | None = None
+    for c in sorted_chunks:
+        doc_key = c.document_title or c.source or ""
+        if doc_key == current_doc and c.position == current_pos + 1 and current_item:
+            current_text.append(c.text)
+            current_pos = c.position
+        else:
+            if current_item:
+                merged.append(
+                    RetrievalResultItem(
+                        chunk_id=current_item.chunk_id,
+                        text="\n\n".join(current_text),
+                        source=current_item.source,
+                        score=current_item.score,
+                        document_title=current_item.document_title,
+                        section_title=current_item.section_title,
+                        position=current_item.position,
+                    )
+                )
+            current_doc = doc_key
+            current_pos = c.position
+            current_text = [c.text]
+            current_item = c
+    if current_item:
+        merged.append(
+            RetrievalResultItem(
+                chunk_id=current_item.chunk_id,
+                text="\n\n".join(current_text),
+                source=current_item.source,
+                score=current_item.score,
+                document_title=current_item.document_title,
+                section_title=current_item.section_title,
+                position=current_item.position,
+            )
+        )
+    return merged
+
+
+def _limit_rag_context(
+    chunks: list[RetrievalResultItem],
+    max_chunks: int,
+    max_chars: int,
+) -> list[RetrievalResultItem]:
+    """Take up to max_chunks, total length <= max_chars (by score order)."""
+    out: list[RetrievalResultItem] = []
+    total = 0
+    for c in chunks:
+        if len(out) >= max_chunks or total + len(c.text) > max_chars:
+            break
+        out.append(c)
+        total += len(c.text) + 2
+    return out
+
+
 def _is_likely_gibberish(message: str) -> bool:
     """Single token or no Cyrillic with very few words often means off-topic/gibberish for RU support."""
     words = re.findall(r"\w+", message.strip())
@@ -71,6 +135,9 @@ class DialogService:
         max_history_messages: int = 10,
         rag_min_confidence: float = 0.30,
         diagnostic_questions_max: int = 2,
+        rag_max_chunks: int = 5,
+        rag_max_context_chars: int = 3000,
+        rag_strict_mode: bool = False,
     ) -> None:
         self._session_factory = session_factory
         self._retrieval = retrieval_client
@@ -79,6 +146,9 @@ class DialogService:
         self._max_history_messages = max_history_messages
         self._rag_min_confidence = rag_min_confidence
         self._diagnostic_questions_max = diagnostic_questions_max
+        self._rag_max_chunks = rag_max_chunks
+        self._rag_max_context_chars = rag_max_context_chars
+        self._rag_strict_mode = rag_strict_mode
 
     async def reply(
         self,
@@ -182,25 +252,36 @@ class DialogService:
                     rag=rag_info,
                 )
 
-            # answer: build prompt, call LLM, append sources and version to reply
+            # Limit and merge chunks for context
+            merged = _merge_adjacent_chunks(rag_chunks)
+            merged.sort(key=lambda c: -c.score)
+            context_chunks = _limit_rag_context(
+                merged,
+                self._rag_max_chunks,
+                self._rag_max_context_chars,
+            )
             prompt = build_full_prompt(
-                user_message, rag_chunks, history, version=termidesk_version
+                user_message,
+                context_chunks,
+                history,
+                version=termidesk_version,
+                strict_mode=self._rag_strict_mode,
             )
             # #region agent log
             _dlog("before llm.generate", {"prompt_len": len(prompt)}, "H2")
             # #endregion
+            import time as _time
+            t0 = _time.perf_counter()
             reply_text = await self._llm.generate(prompt, max_tokens=512)
+            llm_latency_ms = int((_time.perf_counter() - t0) * 1000)
             # #region agent log
             _dlog("after llm.generate", {"reply_len": len(reply_text)}, "H2")
             # #endregion
+            rag_info["llm_latency_ms"] = llm_latency_ms
 
             sources_top3 = [
-                {
-                    "source": c.source,
-                    "chunk_id": c.chunk_id,
-                    "score": c.score,
-                }
-                for c in rag_chunks[:3]
+                {"source": c.source, "chunk_id": c.chunk_id, "score": c.score}
+                for c in context_chunks[:3]
             ]
             sources_line = ", ".join(s.get("source", "?") for s in sources_top3)
             reply_text = f"{reply_text}\n\nИсточники: {sources_line}\nВерсия: {termidesk_version}"
@@ -211,7 +292,7 @@ class DialogService:
 
             sources = [
                 {"chunk_id": c.chunk_id, "text": c.text[:200], "source": c.source}
-                for c in rag_chunks[:3]
+                for c in context_chunks[:3]
             ]
             return ChatResult(
                 reply=reply_text,

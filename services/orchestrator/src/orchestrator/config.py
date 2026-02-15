@@ -16,3 +16,6 @@ class OrchestratorSettings(BaseAppSettings):
     max_history_messages: int = 10
     rag_min_confidence: float = 0.30
     diagnostic_questions_max: int = 2
+    rag_max_chunks: int = 5
+    rag_max_context_chars: int = 3000
+    rag_strict_mode: bool = False

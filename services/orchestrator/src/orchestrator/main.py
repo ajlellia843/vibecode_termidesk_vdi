@@ -49,6 +49,9 @@ async def lifespan(app: FastAPI):
         max_history_messages=settings.max_history_messages,
         rag_min_confidence=settings.rag_min_confidence,
         diagnostic_questions_max=settings.diagnostic_questions_max,
+        rag_max_chunks=settings.rag_max_chunks,
+        rag_max_context_chars=settings.rag_max_context_chars,
+        rag_strict_mode=settings.rag_strict_mode,
     )
     app.state.dialog_service = dialog_service
     app.state.session_factory = session_factory

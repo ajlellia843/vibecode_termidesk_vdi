@@ -10,11 +10,13 @@ def _word_set(text: str) -> set[str]:
 
 def _extract_rag_answer(prompt: str) -> str | None:
     """Extract chunk that best matches the user question (by word overlap)."""
-    marker = "Контекст из базы знаний Termidesk:"
-    end_markers = ("История диалога:", "Текущий вопрос пользователя:")
-    idx = prompt.find(marker)
-    if idx == -1:
+    for marker in ("Источники:", "Контекст из базы знаний Termidesk:"):
+        idx = prompt.find(marker)
+        if idx != -1:
+            break
+    else:
         return None
+    end_markers = ("История диалога:", "Текущий вопрос пользователя:")
     start = idx + len(marker)
     end = len(prompt)
     for em in end_markers:
@@ -24,21 +26,24 @@ def _extract_rag_answer(prompt: str) -> str | None:
     block = prompt[start:end].strip()
     if not block or "(Релевантных фрагментов" in block:
         return None
-    # User question for overlap
     user_marker = "Текущий вопрос пользователя:"
     uidx = prompt.find(user_marker)
     question = prompt[uidx + len(user_marker) :].split("\n")[0].strip() if uidx != -1 else ""
     q_words = _word_set(question) if question else set()
-    # Parse all chunks: [Источник N: source]\n<text> separated by ---
-    chunk_pat = re.compile(r"\[Источник \d+:[^\]]+\]\s*\n(.+?)(?=\n\n---|\n\n\[Источник|\Z)", re.DOTALL)
-    chunks = chunk_pat.findall(block)
-    if not chunks:
-        if "---" in block:
-            chunks = [b.strip() for b in block.split("---") if b.strip() and "[Источник" in b]
-            chunks = [b[b.find("\n") + 1 :].strip() if "\n" in b else b for b in chunks]
-        if not chunks and block:
-            first_nl = block.find("\n")
-            chunks = [block[first_nl + 1 :].strip()] if first_nl != -1 else [block]
+    chunks: list[str] = []
+    # Parse chunks: "[1] header\ntext" or "[Источник 1: source]\ntext", separated by ---
+    for part in re.split(r"\n---\n", block):
+        part = part.strip()
+        if not part:
+            continue
+        first_nl = part.find("\n")
+        if first_nl != -1:
+            chunks.append(part[first_nl + 1 :].strip())
+        else:
+            chunks.append(part)
+    if not chunks and block:
+        first_nl = block.find("\n")
+        chunks = [block[first_nl + 1 :].strip()] if first_nl != -1 else [block]
     if not chunks:
         return None
     # Pick chunk with highest word overlap with question; else first

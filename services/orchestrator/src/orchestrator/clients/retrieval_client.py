@@ -10,6 +10,9 @@ class RetrievalResultItem:
     text: str
     source: str
     score: float
+    document_title: str | None = None
+    section_title: str | None = None
+    position: int = 0
 
 
 class RetrievalClient:
@@ -35,6 +38,9 @@ class RetrievalClient:
                 text=r["text"],
                 source=r["source"],
                 score=float(r.get("score", 0)),
+                document_title=r.get("document_title"),
+                section_title=r.get("section_title"),
+                position=int(r.get("position", 0)),
             )
             for r in results
         ]

@@ -1,11 +1,9 @@
 """Prompt assembly for RAG + dialog."""
 from orchestrator.clients.retrieval_client import RetrievalResultItem
 
-SYSTEM_PROMPT_TEMPLATE = """Ты — саппорт Termidesk VDI.
-Отвечай строго по версии продукта: {version}.
-Используй ТОЛЬКО информацию из предоставленных источников; не выдумывай.
-Если в источниках нет ответа — честно скажи и предложи шаги диагностики или уточняющие вопросы (что за ошибка, на каком шаге, клиент или сервер, логи).
-Отвечай кратко и по делу."""
+SYSTEM_PROMPT_TEMPLATE = """Ты — техническая поддержка Termidesk VDI.
+Отвечай строго по источникам.
+Если информации нет — скажи честно."""
 
 
 def get_system_prompt(version: str) -> str:
@@ -17,8 +15,11 @@ def build_rag_context(chunks: list[RetrievalResultItem]) -> str:
         return "(Релевантных фрагментов в базе знаний не найдено.)"
     parts = []
     for i, c in enumerate(chunks, 1):
-        parts.append(f"[Источник {i}: {c.source}]\n{c.text}")
-    return "\n\n---\n\n".join(parts)
+        title = (c.document_title or c.source or "").strip()
+        section = (c.section_title or "").strip()
+        header = f"{title} – {section}" if section else title
+        parts.append(f"[{i}] {header}\n{c.text}")
+    return "\n---\n".join(parts)
 
 
 def build_messages_context(messages: list[tuple[str, str]]) -> str:
@@ -36,18 +37,22 @@ def build_full_prompt(
     rag_chunks: list[RetrievalResultItem],
     history: list[tuple[str, str]],
     version: str | None = None,
+    strict_mode: bool = False,
 ) -> str:
     system_prompt = get_system_prompt(version or "не указана")
     rag_context = build_rag_context(rag_chunks)
-    history_context = build_messages_context(history)
     prompt_parts = [
         system_prompt,
         "",
-        "Контекст из базы знаний Termidesk:",
+        "Версия: " + (version or "не указана"),
+        "",
+        "Источники:",
         rag_context,
         "",
     ]
-    if history_context:
-        prompt_parts.extend(["История диалога:", history_context, ""])
+    if not strict_mode:
+        history_context = build_messages_context(history)
+        if history_context:
+            prompt_parts.extend(["История диалога:", history_context, ""])
     prompt_parts.extend(["Текущий вопрос пользователя:", user_message, "", "Ответ:"])
     return "\n".join(prompt_parts)

@@ -2,8 +2,8 @@
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.postgresql import ARRAY, UUID, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 try:
@@ -11,6 +11,13 @@ try:
     HAS_VECTOR = True
 except ImportError:
     HAS_VECTOR = False
+
+
+def _embedding_column_type(dim: int = 384):
+    """Column type for embedding: Vector when pgvector available, else ARRAY(Float) for tests."""
+    if HAS_VECTOR:
+        return Vector(dim)
+    return ARRAY(Float)
 
 
 class Base(DeclarativeBase):
@@ -31,12 +38,6 @@ class Document(Base):
     chunks: Mapped[list["Chunk"]] = relationship("Chunk", back_populates="document")
 
 
-def _vector_type(dim: int = 384):
-    if HAS_VECTOR:
-        return Vector(dim)
-    return None
-
-
 class Chunk(Base):
     __tablename__ = "chunks"
     __table_args__ = {"schema": "retrieval"}
@@ -47,8 +48,12 @@ class Chunk(Base):
     )
     text: Mapped[str] = mapped_column(Text, nullable=False)
     index_in_doc: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    section_title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    document_title: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     embedding: Mapped[list[float] | None] = mapped_column(
-        _vector_type(384), nullable=True
+        _embedding_column_type(384), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 

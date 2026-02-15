@@ -11,3 +11,4 @@ class LLMSettings(BaseAppSettings):
     port: int = 8002
     base_url: str = "http://localhost:8000"
     mock: bool = True
+    generate_timeout_seconds: float = 120.0

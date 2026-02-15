@@ -12,6 +12,9 @@ class SearchResultItem(BaseModel):
     chunk_id: str
     text: str
     source: str
+    document_title: str | None = None
+    section_title: str | None = None
+    position: int = 0
     score: float
     confidence: float | None = None
     distance: float | None = None
