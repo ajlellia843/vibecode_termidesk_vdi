@@ -304,13 +304,6 @@ class DialogService:
             llm_latency_ms = int((_time.perf_counter() - t0) * 1000)
             rag_info["llm_latency_ms"] = llm_latency_ms
 
-            sources_top3 = [
-                {"source": c.source, "chunk_id": c.chunk_id, "score": c.score}
-                for c in context_chunks[:3]
-            ]
-            sources_line = ", ".join(s.get("source", "?") for s in sources_top3)
-            reply_text = f"{reply_text}\n\nИсточники: {sources_line}\nВерсия: {termidesk_version}"
-
             await msg_repo.add(conv.id, "user", user_message)
             await msg_repo.add(conv.id, "assistant", reply_text)
             await session.commit()

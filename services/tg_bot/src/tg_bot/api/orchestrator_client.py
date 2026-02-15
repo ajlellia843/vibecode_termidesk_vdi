@@ -14,7 +14,7 @@ class OrchestratorClient:
         user_id: str,
         message: str,
         conversation_id: UUID | None = None,
-    ) -> tuple[str, list[dict[str, str]], UUID | None]:
+    ) -> tuple[str, list[dict[str, str]], UUID | None, str | None]:
         url = f"{self._base_url}/api/v1/chat"
         payload: dict = {"user_id": user_id, "message": message}
         if conversation_id is not None:
@@ -27,7 +27,8 @@ class OrchestratorClient:
         sources = data.get("sources", [])
         cid = data.get("conversation_id")
         conv_id = UUID(cid) if cid else None
-        return reply, sources, conv_id
+        version = data.get("version")
+        return reply, sources, conv_id, version
 
     async def users_upsert(self, telegram_id: str) -> dict:
         url = f"{self._base_url}/api/v1/users/upsert"

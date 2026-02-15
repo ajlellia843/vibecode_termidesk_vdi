@@ -33,14 +33,21 @@ async def handle_message(message: Message, orchestrator_client: OrchestratorClie
         # #region agent log
         _dlog("before orchestrator_client.chat", {"user_id": user_id}, "H5")
         # #endregion
-        reply, sources, _ = await orchestrator_client.chat(
+        reply, sources, _, version = await orchestrator_client.chat(
             user_id=user_id,
             message=message.text.strip(),
             conversation_id=None,
         )
         text = reply
         if sources:
-            text += "\n\nИсточники: " + ", ".join(s.get("source", "?") for s in sources[:3])
+            seen: list[str] = []
+            for s in sources:
+                name = s.get("source", "?")
+                if name not in seen:
+                    seen.append(name)
+            text += "\n\nИсточники: " + ", ".join(seen)
+        if version:
+            text += f"\nВерсия: {version}"
         await message.answer(text[:4096])
         # #region agent log
         _dlog("handler success", {"reply_len": len(reply)}, "H5")

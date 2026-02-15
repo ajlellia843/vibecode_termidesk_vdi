@@ -1,4 +1,5 @@
 """Ingest pipeline: load files -> normalize -> chunk -> embed -> write to DB."""
+import json
 import re
 import sys
 from pathlib import Path
@@ -8,7 +9,6 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from ingest.chunking import ParagraphChunker
-from ingest.db.models import Chunk, Document
 from ingest.loaders import PDFLoader, TextLoader
 from shared.embedder import Embedder
 
@@ -116,6 +116,29 @@ async def run_ingest(
     total_chunks = 0
     used_mock_embedder = getattr(embedder, "_backend", None) == "mock"
 
+    _DOC_UPSERT = text("""
+        INSERT INTO retrieval.documents (id, source, path, meta, version, created_at)
+        VALUES (CAST(:id AS uuid), :source, :path, CAST(:meta AS jsonb), :version, now())
+        ON CONFLICT (source, version) DO UPDATE SET
+            path = EXCLUDED.path, meta = EXCLUDED.meta
+        RETURNING id
+    """)
+    _CHUNK_UPSERT = text("""
+        INSERT INTO retrieval.chunks
+            (id, document_id, text, index_in_doc, section_title, document_title, position, token_count, created_at)
+        VALUES
+            (CAST(:id AS uuid), CAST(:doc_id AS uuid), :text, :idx, :section_title, :doc_title, :position, :token_count, now())
+        ON CONFLICT (document_id, position) DO UPDATE SET
+            text = EXCLUDED.text, index_in_doc = EXCLUDED.index_in_doc,
+            section_title = EXCLUDED.section_title, document_title = EXCLUDED.document_title,
+            token_count = EXCLUDED.token_count
+        RETURNING id
+    """)
+    _STALE_CLEANUP = text("""
+        DELETE FROM retrieval.chunks
+        WHERE document_id = CAST(:doc_id AS uuid) AND position >= :max_position
+    """)
+
     async with session_factory() as session:
         for path in files:
             try:
@@ -129,50 +152,62 @@ async def run_ingest(
                 continue
             source = path.name
             doc_path = str(path)
-            doc = Document(
-                id=uuid4(),
-                source=source,
-                path=doc_path,
-                meta={"ingest_path": doc_path},
-                version=kb_default_version,
+
+            # UPSERT document
+            row = await session.execute(
+                _DOC_UPSERT,
+                {
+                    "id": str(uuid4()),
+                    "source": source,
+                    "path": doc_path,
+                    "meta": json.dumps({"ingest_path": doc_path}),
+                    "version": kb_default_version,
+                },
             )
-            session.add(doc)
-            await session.flush()
+            doc_id = str(row.scalar_one())
 
             chunks_text = chunker.chunk(content)
             chunks_text = merge_short_chunks(chunks_text)
             embeddings = embedder.embed_texts(chunks_text) if chunks_text else []
-            chunk_embeddings: list[tuple[uuid4, list[float] | None]] = []
+            chunk_ids: list[tuple[str, list[float] | None]] = []
             for i, chunk_text in enumerate(chunks_text):
                 emb = embeddings[i] if i < len(embeddings) else None
                 section_title = extract_section_title(chunk_text)
                 document_title = source
-                position = i
                 token_count = max(0, len(chunk_text) // 4)
-                chunk = Chunk(
-                    id=uuid4(),
-                    document_id=doc.id,
-                    text=chunk_text,
-                    index_in_doc=i,
-                    section_title=section_title,
-                    document_title=document_title,
-                    position=position,
-                    token_count=token_count,
-                    embedding=None,
+                # UPSERT chunk
+                crow = await session.execute(
+                    _CHUNK_UPSERT,
+                    {
+                        "id": str(uuid4()),
+                        "doc_id": doc_id,
+                        "text": chunk_text,
+                        "idx": i,
+                        "section_title": section_title,
+                        "doc_title": document_title,
+                        "position": i,
+                        "token_count": token_count,
+                    },
                 )
-                session.add(chunk)
-                chunk_embeddings.append((chunk.id, emb))
+                chunk_id = str(crow.scalar_one())
+                chunk_ids.append((chunk_id, emb))
                 total_chunks += 1
-            await session.flush()
+
+            # Remove stale chunks (file shrank)
+            await session.execute(
+                _STALE_CLEANUP,
+                {"doc_id": doc_id, "max_position": len(chunks_text)},
+            )
+
             num_emb = 0
-            for cid, emb in chunk_embeddings:
+            for cid, emb in chunk_ids:
                 if emb is not None:
                     emb_str = "[" + ",".join(str(x) for x in emb) + "]"
                     result = await session.execute(
                         text(
                             "UPDATE retrieval.chunks SET embedding = CAST(:emb AS vector) WHERE id = CAST(:id AS uuid)"
                         ),
-                        {"emb": emb_str, "id": str(cid)},
+                        {"emb": emb_str, "id": cid},
                     )
                     num_emb += result.rowcount
             if num_emb > 0:

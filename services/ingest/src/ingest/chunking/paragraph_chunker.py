@@ -28,21 +28,30 @@ def _split_sentences(text: str) -> list[str]:
 
 
 def _cut_at_sentence(text: str, max_len: int) -> tuple[str, str]:
-    """Split at last sentence boundary before max_len. Returns (before, rest)."""
+    """Split at last sentence/list/word boundary before max_len. Returns (before, rest)."""
     if len(text) <= max_len:
         return text, ""
     search_region = text[: max_len + 50]
     last = -1
-    for m in re.finditer(r"[.!?]\s+", search_region):
-        last = m.end()
+    # 1. Try sentence end (.!? followed by space) within max_len + small margin
+    for m in re.finditer(r"[.!?]\s+", search_region[: max_len + 10]):
+        if m.end() <= max_len + 10:
+            last = m.end()
+    # 2. Try list-item boundary (cut before a new numbered/bulleted item)
     if last <= 0:
-        last = max(search_region.rfind(". "), search_region.rfind("! "), search_region.rfind("? "))
-        if last >= 0:
-            last += 2
+        for m in re.finditer(r"\n(?=\d+\.\s|[-•]\s)", search_region[:max_len]):
+            last = m.start() + 1  # after the \n
+    # 3. Try newline
     if last <= 0:
-        last = search_region.rfind("\n")
-        if last >= 0:
-            last += 1
+        nl = text[:max_len].rfind("\n")
+        if nl > 0:
+            last = nl + 1
+    # 4. Try last whitespace (avoid mid-word cut)
+    if last <= 0:
+        ws = text[:max_len].rfind(" ")
+        if ws > max_len // 2:
+            last = ws + 1
+    # 5. Hard cut (last resort)
     if last <= 0:
         last = max_len
     return text[:last].strip(), text[last:].lstrip()

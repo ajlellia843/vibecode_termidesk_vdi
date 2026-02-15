@@ -171,9 +171,11 @@ async def test_retrieval_above_threshold_calls_llm_returns_answer(
 
     mock_llm.generate.assert_called_once()
     assert result.mode == "answer"
-    assert "Источники:" in result.reply
-    assert "Версия:" in result.reply
+    # Sources/version are in structured fields, NOT appended to reply text
+    assert "Источники:" not in result.reply
+    assert "Версия:" not in result.reply
     assert result.version == "6.1 (latest)"
     assert len(result.sources) >= 1
+    assert result.sources[0]["source"] == "faq.md"
     assert result.rag is not None
     assert result.rag["top_score"] >= 0.30
