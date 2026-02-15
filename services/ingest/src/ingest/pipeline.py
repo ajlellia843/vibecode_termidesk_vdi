@@ -75,6 +75,9 @@ async def run_ingest(
     chunk_overlap: int = 180,
     kb_default_version: str = "6.1 (latest)",
     embedder: Embedder | None = None,
+    embedder_backend: str = "sentence_transformers",
+    embedder_model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
+    embedding_dim: int = 384,
 ) -> int:
     engine = create_async_engine(database_url, echo=False)
     session_factory = async_sessionmaker(
@@ -82,7 +85,32 @@ async def run_ingest(
     )
     chunker = ParagraphChunker(chunk_size=chunk_size, overlap=chunk_overlap)
     if embedder is None:
-        embedder = Embedder()
+        embedder = Embedder(
+            backend=embedder_backend,
+            model_name=embedder_model_name,
+            dim=embedding_dim,
+        )
+
+    try:
+        import structlog
+        log = structlog.get_logger()
+        log.info(
+            "embedder_config",
+            backend=embedder._backend,
+            model=embedder._model_name,
+            dim=embedder._dim,
+        )
+        if embedder._backend == "mock":
+            log.warning(
+                "embedder_mock_mode",
+                msg="Mock embedder active: embeddings are not semantic. "
+                "Set INGEST_EMBEDDER_BACKEND=sentence_transformers for production.",
+            )
+    except Exception:
+        print(
+            f"[ingest] Embedder: backend={embedder._backend}, model={embedder._model_name}, dim={embedder._dim}",
+            file=sys.stderr,
+        )
 
     files = collect_files(knowledge_path)
     total_chunks = 0

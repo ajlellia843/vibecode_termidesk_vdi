@@ -22,6 +22,9 @@ services:
     env_file: .env
     environment:
       RETRIEVAL_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-termidesk_bot}
+      RETRIEVAL_EMBEDDER_BACKEND: ${RETRIEVAL_EMBEDDER_BACKEND:-sentence_transformers}
+      RETRIEVAL_EMBEDDER_MODEL_NAME: ${RETRIEVAL_EMBEDDER_MODEL_NAME:-sentence-transformers/all-MiniLM-L6-v2}
+      RETRIEVAL_EMBEDDING_DIM: ${RETRIEVAL_EMBEDDING_DIM:-384}
       DEBUG_LOG_PATH: /app/.cursor/debug.log
     volumes:
       - ./.cursor:/app/.cursor
@@ -84,6 +87,9 @@ services:
     environment:
       INGEST_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-termidesk_bot}
       INGEST_KNOWLEDGE_PATH: /app/knowledge
+      INGEST_EMBEDDER_BACKEND: ${INGEST_EMBEDDER_BACKEND:-sentence_transformers}
+      INGEST_EMBEDDER_MODEL_NAME: ${INGEST_EMBEDDER_MODEL_NAME:-sentence-transformers/all-MiniLM-L6-v2}
+      INGEST_EMBEDDING_DIM: ${INGEST_EMBEDDING_DIM:-384}
     volumes:
       - ./knowledge:/app/knowledge:ro
     depends_on:

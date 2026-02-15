@@ -1,4 +1,4 @@
-.PHONY: up down logs migrate test format ingest
+.PHONY: up down logs migrate test format ingest reingest
 
 up:
 	docker compose up -d
@@ -26,3 +26,6 @@ format:
 
 ingest:
 	docker compose --profile tools run --rm ingest
+
+reingest:
+	bash scripts/reingest.sh

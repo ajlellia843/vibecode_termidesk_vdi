@@ -15,6 +15,9 @@ def main() -> None:
             chunk_size=settings.chunk_size,
             chunk_overlap=settings.chunk_overlap,
             kb_default_version=settings.kb_default_version,
+            embedder_backend=settings.embedder_backend,
+            embedder_model_name=settings.embedder_model_name,
+            embedding_dim=settings.embedding_dim,
         )
     )
     print(f"Ingested {n} chunks", file=sys.stderr)

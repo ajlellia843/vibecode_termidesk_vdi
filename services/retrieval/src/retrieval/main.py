@@ -58,6 +58,19 @@ async def lifespan(app: FastAPI):
         class_=AsyncSession,
         expire_on_commit=False,
     )
+    log = structlog.get_logger()
+    log.info(
+        "embedder_config",
+        backend=settings.embedder_backend,
+        model=settings.embedder_model_name,
+        dim=settings.embedding_dim,
+    )
+    if settings.embedder_backend.lower() == "mock":
+        log.warning(
+            "embedder_mock_mode",
+            msg="Mock embedder active: retrieval quality will be degraded. "
+            "Set RETRIEVAL_EMBEDDER_BACKEND=sentence_transformers for production.",
+        )
     embedder = Embedder(
         backend=settings.embedder_backend,
         model_name=settings.embedder_model_name,

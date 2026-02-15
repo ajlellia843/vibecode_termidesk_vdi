@@ -97,11 +97,52 @@ curl -X POST http://localhost:8002/generate \
    ```
 4. Перезапустите сервисы: `docker compose up -d`.
 
+## После смены embedder'а -- переиндексация (reingest)
+
+Если вы сменили embedder backend или модель (например, с mock на sentence_transformers), необходимо переиндексировать базу знаний, чтобы пересоздать все embeddings:
+
+```bash
+make reingest
+# или вручную:
+# bash scripts/reingest.sh
+```
+
+Эта команда очистит таблицы `retrieval.documents` и `retrieval.chunks` и запустит ingest заново.
+
+## Проверка что RAG "не плоский"
+
+1. Убедитесь, что embedder настроен на `sentence_transformers`:
+   ```bash
+   docker compose exec retrieval env | grep EMBEDDER
+   # Ожидается: RETRIEVAL_EMBEDDER_BACKEND=sentence_transformers
+   ```
+
+2. Проверьте логи retrieval при старте -- должно быть:
+   ```
+   embedder_config  backend=sentence_transformers  model=sentence-transformers/all-MiniLM-L6-v2  dim=384
+   ```
+   Если видите `embedder_mock_mode` -- embedder в режиме mock, исправьте переменные окружения.
+
+3. Сделайте поисковый запрос и убедитесь, что score/distance различаются:
+   ```bash
+   curl -s http://localhost:8001/search \
+     -H "Content-Type: application/json" \
+     -d '{"query": "ошибка подключения", "top_k": 5}' | python -m json.tool
+   ```
+   Ожидается: `score` и `distance` разные для разных результатов (не одинаковые ~0.5).
+
+4. Автоматический smoke-test:
+   ```bash
+   bash scripts/smoke_test_rag.sh
+   ```
+
 ## Команды Makefile
 
 - `make up` — поднять все сервисы
 - `make down` — остановить
 - `make logs` — логи
 - `make migrate` — применить миграции
+- `make ingest` — загрузить базу знаний
+- `make reingest` — очистить и переиндексировать базу знаний (после смены embedder'а)
 - `make test` — запуск тестов
 - `make format` — форматирование кода

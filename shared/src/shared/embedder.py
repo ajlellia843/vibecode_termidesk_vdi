@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 
 def _default_backend() -> str:
-    return os.environ.get("EMBEDDER_BACKEND", "mock")
+    return os.environ.get("EMBEDDER_BACKEND", "sentence_transformers")
 
 
 def _default_model() -> str:
@@ -23,7 +23,7 @@ def _default_dim() -> int:
 
 
 class Embedder:
-    """Embed texts into 384-dim vectors. Backend: sentence_transformers or mock."""
+    """Embed texts into vectors. Backend: sentence_transformers (default) or mock."""
 
     def __init__(
         self,
@@ -37,6 +37,7 @@ class Embedder:
         self._model = None
         if self._backend == "sentence_transformers":
             self._load_model()
+            self._validate_dim()
 
     def _load_model(self) -> None:
         try:
@@ -46,6 +47,17 @@ class Embedder:
             raise RuntimeError(
                 "sentence_transformers backend requires: pip install sentence-transformers"
             ) from e
+
+    def _validate_dim(self) -> None:
+        """Fail-fast: verify actual model output dim matches configured dim."""
+        test_vec = self.embed_texts(["dim validation test"])[0]
+        actual = len(test_vec)
+        if actual != self._dim:
+            raise ValueError(
+                f"Embedding dim mismatch: configured dim={self._dim}, "
+                f"actual model output dim={actual}. "
+                f"Set EMBED_DIM={actual} or use a model with dim={self._dim}."
+            )
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Return list of embedding vectors (each of length embed_dim)."""
