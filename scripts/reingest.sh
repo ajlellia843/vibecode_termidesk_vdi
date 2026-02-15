@@ -23,6 +23,9 @@ echo "=== Truncating retrieval.documents and retrieval.chunks ==="
 docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
   -c "TRUNCATE retrieval.documents CASCADE;"
 
+echo "=== Building ingest image (ensures UPSERT pipeline is used) ==="
+docker compose --profile tools build ingest
+
 echo "=== Running ingest ==="
 docker compose --profile tools run --rm ingest
 
