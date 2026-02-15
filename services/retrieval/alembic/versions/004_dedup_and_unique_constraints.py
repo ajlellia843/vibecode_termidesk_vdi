@@ -16,11 +16,15 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # --- Dedup documents: keep min(id) per (source, version), delete rest ---
+    # --- Dedup documents: keep one row per (source, version), delete rest (PostgreSQL has no min(uuid)) ---
     op.execute("""
         DELETE FROM retrieval.documents d
         WHERE d.id NOT IN (
-            SELECT min(id) FROM retrieval.documents GROUP BY source, version
+            SELECT id FROM (
+                SELECT DISTINCT ON (source, version) id
+                FROM retrieval.documents
+                ORDER BY source, version, id
+            ) keep
         )
     """)
     op.create_unique_constraint(
@@ -30,11 +34,15 @@ def upgrade() -> None:
         schema="retrieval",
     )
 
-    # --- Dedup chunks: keep min(id) per (document_id, position), delete rest ---
+    # --- Dedup chunks: keep one row per (document_id, position), delete rest ---
     op.execute("""
         DELETE FROM retrieval.chunks c
         WHERE c.id NOT IN (
-            SELECT min(id) FROM retrieval.chunks GROUP BY document_id, position
+            SELECT id FROM (
+                SELECT DISTINCT ON (document_id, position) id
+                FROM retrieval.chunks
+                ORDER BY document_id, position, id
+            ) keep
         )
     """)
     op.create_unique_constraint(
