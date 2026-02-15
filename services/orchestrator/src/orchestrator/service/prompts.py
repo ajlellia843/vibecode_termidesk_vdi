@@ -1,16 +1,20 @@
 """Prompt assembly for RAG + dialog."""
 from orchestrator.clients.retrieval_client import RetrievalResultItem
+from orchestrator.service.context_utils import trim_to_limit
 
 SYSTEM_PROMPT_TEMPLATE = """Ты — техническая поддержка Termidesk VDI.
-Отвечай строго по источникам.
-Если информации нет — скажи честно."""
+Отвечай кратко и по вопросу. Используй только релевантные предложения из источников.
+Не переписывай весь документ. Если информации нет — скажи честно."""
 
 
 def get_system_prompt(version: str) -> str:
     return SYSTEM_PROMPT_TEMPLATE.format(version=version or "не указана")
 
 
-def build_rag_context(chunks: list[RetrievalResultItem]) -> str:
+def build_rag_context(
+    chunks: list[RetrievalResultItem],
+    max_chars: int = 2500,
+) -> str:
     if not chunks:
         return "(Релевантных фрагментов в базе знаний не найдено.)"
     parts = []
@@ -19,7 +23,8 @@ def build_rag_context(chunks: list[RetrievalResultItem]) -> str:
         section = (c.section_title or "").strip()
         header = f"{title} – {section}" if section else title
         parts.append(f"[{i}] {header}\n{c.text}")
-    return "\n---\n".join(parts)
+    assembled = "\n\n---\n\n".join(parts)
+    return trim_to_limit(assembled, max_chars)
 
 
 def build_messages_context(messages: list[tuple[str, str]]) -> str:
@@ -38,9 +43,10 @@ def build_full_prompt(
     history: list[tuple[str, str]],
     version: str | None = None,
     strict_mode: bool = False,
+    max_context_chars: int = 2500,
 ) -> str:
     system_prompt = get_system_prompt(version or "не указана")
-    rag_context = build_rag_context(rag_chunks)
+    rag_context = build_rag_context(rag_chunks, max_chars=max_context_chars)
     prompt_parts = [
         system_prompt,
         "",
