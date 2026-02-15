@@ -160,6 +160,9 @@ class DialogService:
         """
         Process user message and return ChatResult (reply, sources, conversation_id, mode, version, rag).
         """
+        # #region agent log
+        _dlog("reply_entry", {"user_id": user_id, "message_preview": (user_message or "")[:60]}, "H1")
+        # #endregion
         async with self._session_factory() as session:
             conv_repo = ConversationRepository(session)
             msg_repo = MessageRepository(session)
@@ -167,6 +170,9 @@ class DialogService:
 
             user = await user_repo.get_by_telegram_id(user_id)
             termidesk_version: str | None = user.termidesk_version if user else None
+            # #region agent log
+            _dlog("reply_after_user_lookup", {"termidesk_version": termidesk_version}, "H3")
+            # #endregion
 
             if conversation_id:
                 conv = await conv_repo.get_by_id(conversation_id)
@@ -185,6 +191,9 @@ class DialogService:
 
             # need_version: user has not selected version
             if termidesk_version is None:
+                # #region agent log
+                _dlog("branch_taken", {"branch": "need_version"}, "H1")
+                # #endregion
                 reply_text = NEED_VERSION_REPLY
                 await msg_repo.add(conv.id, "user", user_message)
                 await msg_repo.add(conv.id, "assistant", reply_text)
@@ -202,12 +211,18 @@ class DialogService:
             # #region agent log
             _dlog("before retrieval.search", {"user_message": user_message[:50], "version": termidesk_version}, "H2")
             # #endregion
-            rag_chunks: list[RetrievalResultItem] = await self._retrieval.search(
-                user_message, top_k=self._retrieval_top_k, version=termidesk_version
-            )
-            # #region agent log
-            _dlog("after retrieval.search", {"rag_len": len(rag_chunks)}, "H2")
-            # #endregion
+            try:
+                rag_chunks: list[RetrievalResultItem] = await self._retrieval.search(
+                    user_message, top_k=self._retrieval_top_k, version=termidesk_version
+                )
+                # #region agent log
+                _dlog("retrieval_ok", {"rag_len": len(rag_chunks), "top_score": round(max((c.score for c in rag_chunks), default=0.0), 4)}, "H2")
+                # #endregion
+            except Exception as e:
+                # #region agent log
+                _dlog("retrieval_error", {"exc_type": type(e).__name__, "exc_msg": str(e)[:300]}, "H2")
+                # #endregion
+                raise
 
             top_score = max((c.score for c in rag_chunks), default=0.0)
             rag_info = {
@@ -221,6 +236,9 @@ class DialogService:
 
             # diagnostic: empty or below threshold — do not call LLM
             if not rag_chunks or top_score < self._rag_min_confidence:
+                # #region agent log
+                _dlog("branch_taken", {"branch": "diagnostic", "reason": "empty_or_below_threshold", "top_score": top_score}, "H1")
+                # #endregion
                 reply_text = _build_diagnostic_reply(self._diagnostic_questions_max)
                 await msg_repo.add(conv.id, "user", user_message)
                 await msg_repo.add(conv.id, "assistant", reply_text)
@@ -237,7 +255,7 @@ class DialogService:
             # message looks like gibberish (single token / no Cyrillic) — force diagnostic to avoid RAG noise
             if _is_likely_gibberish(user_message):
                 # #region agent log
-                _dlog("gibberish override", {"user_message_preview": user_message[:40], "top_score": top_score}, "H1")
+                _dlog("branch_taken", {"branch": "diagnostic", "reason": "gibberish", "top_score": top_score}, "H1")
                 # #endregion
                 reply_text = _build_diagnostic_reply(self._diagnostic_questions_max)
                 await msg_repo.add(conv.id, "user", user_message)
@@ -268,15 +286,22 @@ class DialogService:
                 strict_mode=self._rag_strict_mode,
             )
             # #region agent log
+            _dlog("branch_taken", {"branch": "answer", "context_chunks": len(context_chunks)}, "H1")
             _dlog("before llm.generate", {"prompt_len": len(prompt)}, "H2")
             # #endregion
             import time as _time
             t0 = _time.perf_counter()
-            reply_text = await self._llm.generate(prompt, max_tokens=512)
+            try:
+                reply_text = await self._llm.generate(prompt, max_tokens=512)
+                # #region agent log
+                _dlog("llm_ok", {"reply_len": len(reply_text)}, "H3")
+                # #endregion
+            except Exception as e:
+                # #region agent log
+                _dlog("llm_error", {"exc_type": type(e).__name__, "exc_msg": str(e)[:300]}, "H3")
+                # #endregion
+                raise
             llm_latency_ms = int((_time.perf_counter() - t0) * 1000)
-            # #region agent log
-            _dlog("after llm.generate", {"reply_len": len(reply_text)}, "H2")
-            # #endregion
             rag_info["llm_latency_ms"] = llm_latency_ms
 
             sources_top3 = [
