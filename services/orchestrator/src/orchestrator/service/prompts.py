@@ -1,10 +1,11 @@
 """Prompt assembly for RAG + dialog."""
 from orchestrator.clients.retrieval_client import RetrievalResultItem
-from orchestrator.service.context_utils import trim_to_limit
+from orchestrator.service.rag_text import safe_trim
 
 SYSTEM_PROMPT_TEMPLATE = """Ты — техническая поддержка Termidesk VDI.
 Отвечай кратко и по вопросу. Используй только релевантные предложения из источников.
-Не переписывай весь документ. Если информации нет — скажи честно."""
+Не переписывай весь документ. Если информации нет — скажи честно.
+Отвечай кратко по вопросу. Не переписывай весь контекст. Если вопрос про конкретную проблему — используй соответствующую секцию."""
 
 
 def get_system_prompt(version: str) -> str:
@@ -24,7 +25,7 @@ def build_rag_context(
         header = f"{title} – {section}" if section else title
         parts.append(f"[{i}] {header}\n{c.text}")
     assembled = "\n\n---\n\n".join(parts)
-    return trim_to_limit(assembled, max_chars)
+    return safe_trim(assembled, max_chars)
 
 
 def build_messages_context(messages: list[tuple[str, str]]) -> str:

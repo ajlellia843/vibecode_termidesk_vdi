@@ -15,6 +15,7 @@ from orchestrator.service.context_utils import (
     normalize_and_dedup,
 )
 from orchestrator.service.prompts import build_full_prompt
+from orchestrator.service import rag_text
 
 NEED_VERSION_REPLY = (
     "Чтобы получать ответы по документации, выберите версию Termidesk (кнопка «Версия» или /version)."
@@ -133,6 +134,8 @@ class DialogService:
         rag_strict_mode: bool = False,
         rag_join_neighbors: bool = True,
         rag_dedup_lines: bool = True,
+        rag_section_extraction: bool = True,
+        rag_normalize_text: bool = True,
     ) -> None:
         self._session_factory = session_factory
         self._retrieval = retrieval_client
@@ -146,6 +149,8 @@ class DialogService:
         self._rag_strict_mode = rag_strict_mode
         self._rag_join_neighbors = rag_join_neighbors
         self._rag_dedup_lines = rag_dedup_lines
+        self._rag_section_extraction = rag_section_extraction
+        self._rag_normalize_text = rag_normalize_text
 
     async def reply(
         self,
@@ -250,6 +255,19 @@ class DialogService:
             if self._rag_join_neighbors:
                 merged = _merge_adjacent_chunks(unique_chunks)
                 merged.sort(key=lambda c: -c.score)
+                if self._rag_normalize_text:
+                    merged = [
+                        RetrievalResultItem(
+                            chunk_id=c.chunk_id,
+                            text=rag_text.normalize_text(c.text),
+                            source=c.source,
+                            score=c.score,
+                            document_title=c.document_title,
+                            section_title=c.section_title,
+                            position=c.position,
+                        )
+                        for c in merged
+                    ]
             else:
                 merged = unique_chunks
 
@@ -258,9 +276,29 @@ class DialogService:
                 merged, self._rag_max_chunks, self._rag_max_context_chars,
             )
 
-            # 4. Section extraction + line dedup per chunk
-            if self._rag_dedup_lines:
-                cleaned_chunks: list[RetrievalResultItem] = []
+            # 4. Section extraction and/or normalization per chunk (rag_text) or legacy dedup (context_utils)
+            if self._rag_section_extraction or self._rag_normalize_text:
+                cleaned_chunks = []
+                for c in context_chunks:
+                    txt = c.text
+                    if self._rag_section_extraction:
+                        txt = rag_text.best_section(txt, user_message)
+                    if self._rag_normalize_text:
+                        txt = rag_text.normalize_text(txt)
+                    cleaned_chunks.append(
+                        RetrievalResultItem(
+                            chunk_id=c.chunk_id,
+                            text=txt,
+                            source=c.source,
+                            score=c.score,
+                            document_title=c.document_title,
+                            section_title=c.section_title,
+                            position=c.position,
+                        )
+                    )
+                context_chunks = cleaned_chunks
+            elif self._rag_dedup_lines:
+                cleaned_chunks = []
                 for c in context_chunks:
                     cleaned = extract_relevant_section(c.text, user_message)
                     cleaned = normalize_and_dedup(cleaned)

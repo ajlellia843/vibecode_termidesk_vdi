@@ -54,6 +54,8 @@ async def lifespan(app: FastAPI):
         rag_strict_mode=settings.rag_strict_mode,
         rag_join_neighbors=settings.rag_join_neighbors,
         rag_dedup_lines=settings.rag_dedup_lines,
+        rag_section_extraction=settings.rag_section_extraction,
+        rag_normalize_text=settings.rag_normalize_text,
     )
     app.state.dialog_service = dialog_service
     app.state.session_factory = session_factory
